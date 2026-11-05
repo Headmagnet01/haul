@@ -3,6 +3,8 @@
   import Placeholder from './components/Placeholder.svelte';
   import QueueView from './components/QueueView.svelte';
   import Toast from './components/Toast.svelte';
+  import Drawer from './components/Drawer.svelte';
+  import StatusBar from './components/StatusBar.svelte';
   import { getBackend } from './lib/backend';
   import { createAppState } from './lib/app-state.svelte';
 
@@ -18,11 +20,11 @@
   <Rail {view} onselect={(v) => (view = v)} queueCount={active} />
   {#if view === 'queue'}
     <QueueView {app} />
-    <aside class="drawer" aria-label="Details"></aside>
+    <Drawer {app} />
   {:else}
     <Placeholder title={label} />
   {/if}
-  <footer class="bar"></footer>
+  <StatusBar {app} />
 </div>
 <Toast toast={app.toast} ondismiss={() => (app.toast = null)} />
 
@@ -32,9 +34,4 @@
     height: 100vh; min-width: 1080px; min-height: 0;
   }
   .app.with-drawer { grid-template-columns: 208px minmax(0, 1fr) 340px; }
-  .drawer { grid-row: 1; border-left: 1px solid var(--line); background: var(--bg); min-width: 0; overflow: auto; }
-  .bar {
-    grid-column: 1 / -1; grid-row: 2; display: flex; align-items: center; gap: 18px; padding: 0 16px;
-    border-top: 1px solid var(--line); background: var(--bg); font-size: 12.5px; color: var(--ink-2);
-  }
 </style>

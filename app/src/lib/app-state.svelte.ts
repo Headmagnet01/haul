@@ -1,7 +1,10 @@
 import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 import type { Backend } from './backend';
 import { applyUpdate, buildList, summary, type ListItem } from './model';
-import type { AddResult, DownloadView, Snapshot, Update } from './types';
+import { RangeSpeeds } from './speeds';
+import type { AddResult, DownloadView, Snapshot, SpeedLimit, Update } from './types';
+
+export const HISTORY = 240; // 60 s at 4 updates per second
 
 export interface ToastMsg {
   id: number;
@@ -23,6 +26,10 @@ export function createAppState(backend: Backend) {
   let filter = $state('');
   let toast = $state<ToastMsg | null>(null);
   let loaded = $state(false);
+  let speedHistory = $state<number[]>([]);
+  const lastSteal = new SvelteMap<number, number>();
+  const rangeSpeeds = new RangeSpeeds();
+  const ranges = new SvelteMap<number, { start: number; bps: number; done: boolean }[]>();
   let toastSeq = 0;
   let toastTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -35,6 +42,7 @@ export function createAppState(backend: Backend) {
     snapshot = snap;
     byId = new Map(snapshot.downloads.map((d) => [d.id, d]));
     for (const id of [...speeds.keys()]) if (!byId.has(id)) speeds.delete(id);
+    for (const id of [...ranges.keys()]) if (!byId.has(id)) { ranges.delete(id); rangeSpeeds.forget(id); }
     if (selected !== null && !byId.has(selected)) selected = null;
     if (selectedPkg !== null && !snapshot.packages.some((p) => p.id === selectedPkg)) selectedPkg = null;
     loaded = true;
@@ -43,6 +51,15 @@ export function createAppState(backend: Backend) {
   const listeners = new Set<(u: Update) => void>();
   backend.onUpdate((u) => {
     const r = applyUpdate(byId, speeds, u);
+    const now = performance.now();
+    for (const p of u.progress) {
+      rangeSpeeds.update(p.id, p.segments, now);
+      ranges.set(p.id, rangeSpeeds.get(p.id));
+    }
+    for (const s of u.steals) lastSteal.set(s.id, s.bytes);
+    let total = 0;
+    for (const v of speeds.values()) total += v;
+    speedHistory = [...speedHistory, total].slice(-HISTORY);
     listeners.forEach((cb) => cb(u));
     if (r.resync) void load();
   });
@@ -91,6 +108,13 @@ export function createAppState(backend: Backend) {
     get toast() { return toast; },
     set toast(v: ToastMsg | null) { toast = v; },
     get loaded() { return loaded; },
+    get speedHistory() { return speedHistory; },
+    lastSteal,
+    ranges,
+    async setSpeedLimit(l: SpeedLimit) {
+      snapshot.speedLimit = { ...l };
+      await backend.setSpeedLimit(l);
+    },
     get list() { return list; },
     get totals() { return totals; },
     onUpdate(cb: (u: Update) => void) {
