@@ -175,3 +175,90 @@ fn crash_simulation() {
         assert_file_eq(&p, LEN);
     });
 }
+
+fn ctx_with_free_space(store: Store, free: u64) -> TransferCtx {
+    let mut c = ctx_on(store);
+    c.config.free_space_override = Some(free);
+    c
+}
+
+/// A changed file must restart from zero even if the first attempt after the change
+/// fails before any progress is saved (here: another program holds the part file locked).
+#[cfg(windows)]
+#[tokio::test]
+async fn changed_file_restarts_after_early_failure() {
+    use std::os::windows::fs::OpenOptionsExt;
+    let srv = throttled_server().await;
+    let dir = tempfile::tempdir().unwrap();
+    let c = ctx_on(Store::open_in_memory().unwrap());
+    let id = add(&c, &srv.url, dir.path());
+    assert!(matches!(run_until(&c, id, 0.4).await, TransferOutcome::Paused));
+    srv.spec.lock().unwrap().etag = Some("v2".into());
+    let part = std::fs::read_dir(dir.path())
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .find(|e| e.file_name().to_string_lossy().ends_with(".haulpart"))
+        .unwrap()
+        .path();
+    let lock = std::fs::OpenOptions::new().read(true).share_mode(0).open(&part).unwrap();
+    let out = run(&c, id).await;
+    assert!(matches!(out, TransferOutcome::Failed(haul_engine::EngineError::Io(_))), "got {out:?}");
+    drop(lock);
+    let before = srv.bytes_sent.load(SeqCst);
+    let p = completed(run(&c, id).await);
+    assert_file_eq(&p, LEN);
+    let sent = srv.bytes_sent.load(SeqCst) - before;
+    assert!(sent as f64 >= 0.95 * LEN as f64, "sent {sent}: resumed stale bytes of a changed file");
+}
+
+/// The part file already holds its full size on disk, so resuming needs no new space.
+#[tokio::test]
+async fn resume_needs_no_space_for_allocated_part() {
+    let srv = throttled_server().await;
+    let dir = tempfile::tempdir().unwrap();
+    let c = ctx_on(Store::open_in_memory().unwrap());
+    let id = add(&c, &srv.url, dir.path());
+    assert!(matches!(run_until(&c, id, 0.4).await, TransferOutcome::Paused));
+    let tight = ctx_with_free_space(c.store.clone(), (LEN / 4) as u64);
+    let p = completed(run(&tight, id).await);
+    assert_file_eq(&p, LEN);
+}
+
+/// A resume with one big range left still uses all its connections (the extras steal).
+#[tokio::test]
+async fn resume_with_one_range_uses_all_connections() {
+    let srv = throttled_server().await;
+    let dir = tempfile::tempdir().unwrap();
+    let c = ctx_on(Store::open_in_memory().unwrap());
+    let id = add(&c, &srv.url, dir.path());
+    assert!(matches!(run_until(&c, id, 0.05).await, TransferOutcome::Paused));
+    c.store.save_segments(id, &[haul_engine::Range { start: 0, pos: 0, end: LEN as u64 }]).unwrap();
+    srv.max_concurrent.store(0, SeqCst);
+    let p = completed(run(&c, id).await);
+    assert_file_eq(&p, LEN);
+    let max = srv.max_concurrent.load(SeqCst);
+    assert!(max >= 3, "only {max} connections at once");
+}
+
+/// Disk full leaves the download Paused, and says so in one state change.
+#[tokio::test]
+async fn disk_full_is_a_pause() {
+    let srv = throttled_server().await;
+    let dir = tempfile::tempdir().unwrap();
+    let c = ctx_with_free_space(Store::open_in_memory().unwrap(), 1000);
+    let id = add(&c, &srv.url, dir.path());
+    let mut rx = c.events.subscribe();
+    let out = run(&c, id).await;
+    assert!(matches!(out, TransferOutcome::Failed(haul_engine::EngineError::DiskFull)), "got {out:?}");
+    assert_eq!(c.store.get_download(id).unwrap().state, haul_engine::DownloadState::Paused);
+    let mut finals = Vec::new();
+    while let Ok(ev) = rx.try_recv() {
+        if let Event::StateChanged { id: e, state, .. } = ev
+            && e == id
+            && state != haul_engine::DownloadState::Running
+        {
+            finals.push(state);
+        }
+    }
+    assert_eq!(finals, vec![haul_engine::DownloadState::Paused]);
+}

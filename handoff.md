@@ -14,7 +14,7 @@ A free, open-source Windows download manager. It pairs IDM's fast engine and bro
 |---|---|
 | Branch | `feat/engine-core`: 12 commits on top of `master` (`b9f9a64`). **Not merged yet.** No Git remote exists. |
 | Done | Plan 1, the engine core: `docs/superpowers/plans/2026-11-05-haul-plan-1-engine-core.md`, Tasks 0–10. |
-| Tests | 82 tests, green 3 runs in a row. `cargo clippy -- -D warnings` is clean. |
+| Tests | 87 tests, green 6 runs in a row after the review fixes. `cargo clippy -- -D warnings` is clean. |
 | Real-world check | 100 MB from `sin-speed.hetzner.com`: correct SHA-256, resumed after a hard kill, never overwrote an existing file. |
 | Next | Plan 2: the Tauri shell + Queue UI. It hasn't been written yet; start it with superpowers:writing-plans from spec sections 5–6. |
 
@@ -85,10 +85,23 @@ Each line says what it costs if the decision is wrong.
 
 ## Known minors, deferred
 - **`AllDone` fires too often:** it also fires when the user pauses every download, so plan 2 must check states before acting on "when done".
-- **All connections stalled:** if every connection stalls at 0 B/s, recovery waits for the 30 s read timeout. This was seen on Hetzner. Fix: add a "no bytes for `slow_window`" stall rule.
-- **Removed rows:** the dispatcher can start a transfer for a row removed a moment earlier, which sends a harmless Failed event for a gone id.
-- **Line endings:** Git warns LF→CRLF on every commit. Fix: add `.gitattributes`.
-- **Review gap:** the final review was a self-review, with no fresh reviewer. Consider running `/code-review` on the branch before merging.
+- **Stalls under a speed limit:** the stall rule (no bytes for `slow_window` → reconnect) is off while a speed limit is set, so a stall there still waits for the 30 s read timeout.
+- **Crash during finish:** a crash between the final rename and `set_completed` re-downloads the file as `name (1)`. Fix: store `target_path` before the rename and check it on recovery.
+- **Schedule vs. manual pause:** when a schedule window opens, it re-queues every download it auto-paused, even one the user has since decided to keep paused. This needs an owner decision.
+
+## Post-review fixes (5 Nov 2026)
+`/code-review` (high) ran on the branch. Fixed, each with a test that failed first except the 429 race:
+- A changed file could resume onto stale bytes after an early failure.
+- Resume used too few connections.
+- The free-space check ignored the already-sized part file.
+- Disk full is now a single Paused state.
+- Pause/remove could lose a race with the dispatcher (`Store::start_if_queued`).
+- A 429 shed could orphan a range.
+- The stall rule.
+- `.gitattributes`.
+- The unused `unique_path` was removed.
+
+Details and rulings are in `.superpowers/sdd/2026-11-05-haul-plan-1-engine-core/progress.md`. There are now 87 tests.
 
 ## Working agreements (read before continuing)
 - **Write the code yourself.** Don't delegate to the codex/deepseek/opencode workers, even though `C:\Users\User\.claude\deepseek-on` exists. The owner asked for this explicitly.

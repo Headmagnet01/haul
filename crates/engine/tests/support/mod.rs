@@ -48,6 +48,8 @@ pub struct Spec {
     pub slow_from: Option<(u64, u64)>,
     /// The first response for each range start aborts after N bytes.
     pub drop_after: Option<u64>,
+    /// The first response for each range start sends N bytes, then hangs without closing.
+    pub stall_after: Option<u64>,
     /// After N requests, answer ranged GETs with 200 and the full body.
     pub ignore_range_after_requests: Option<u32>,
     /// Omit Content-Length and stream chunked.
@@ -86,6 +88,7 @@ struct Srv {
     max_concurrent: Arc<AtomicU32>,
     too_many: Arc<AtomicU32>,
     dropped_starts: Mutex<HashSet<u64>>,
+    stalled_starts: Mutex<HashSet<u64>>,
 }
 
 struct InFlight {
@@ -117,6 +120,7 @@ pub async fn serve(spec: Spec) -> TestServer {
         max_concurrent: Arc::new(AtomicU32::new(0)),
         too_many: Arc::new(AtomicU32::new(0)),
         dropped_starts: Mutex::new(HashSet::new()),
+        stalled_starts: Mutex::new(HashSet::new()),
     });
     let mut app = Router::new().route("/file", get(handle));
     if let Some(p) = &redirect_from {
@@ -168,6 +172,7 @@ struct Stream {
     sent: u64,
     bps: Option<u64>,
     drop_at: Option<u64>,
+    stall_at: Option<u64>,
     t0: Instant,
     bytes_sent: Arc<AtomicU64>,
     _guard: InFlight,
@@ -251,6 +256,7 @@ async fn handle(State(s): State<Arc<Srv>>, method: Method, headers: HeaderMap) -
         _ => spec.bytes_per_sec,
     };
     let drop_at = spec.drop_after.filter(|_| s.dropped_starts.lock().unwrap().insert(start));
+    let stall_at = spec.stall_after.filter(|_| s.stalled_starts.lock().unwrap().insert(start));
     let st = Stream {
         data,
         pos: start,
@@ -258,6 +264,7 @@ async fn handle(State(s): State<Arc<Srv>>, method: Method, headers: HeaderMap) -
         sent: 0,
         bps,
         drop_at,
+        stall_at,
         t0: Instant::now(),
         bytes_sent: s.bytes_sent.clone(),
         _guard: InFlight::new(s.in_flight.clone(), &s.max_concurrent),
@@ -271,6 +278,12 @@ async fn handle(State(s): State<Arc<Srv>>, method: Method, headers: HeaderMap) -
             if st.sent >= d {
                 st.pos = st.end;
                 return Some((Err(io::Error::other("test server: dropped")), st));
+            }
+            chunk = chunk.min(d - st.sent);
+        }
+        if let Some(d) = st.stall_at {
+            if st.sent >= d {
+                futures::future::pending::<()>().await;
             }
             chunk = chunk.min(d - st.sent);
         }

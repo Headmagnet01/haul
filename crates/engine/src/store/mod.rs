@@ -191,6 +191,16 @@ impl Store {
         Ok(())
     }
 
+    /// Queued -> Running in one step. False if the row is in any other state or gone,
+    /// so a pause or remove that lands first always wins.
+    pub fn start_if_queued(&self, id: DownloadId) -> Result<bool, EngineError> {
+        let n = self.lock().execute(
+            "UPDATE downloads SET state = ?2, error = NULL WHERE id = ?1 AND state = ?3",
+            params![id, DownloadState::Running.as_str(), DownloadState::Queued.as_str()],
+        )?;
+        Ok(n == 1)
+    }
+
     pub fn set_completed(&self, id: DownloadId, path: &Path) -> Result<(), EngineError> {
         self.lock().execute(
             "UPDATE downloads SET state = ?2, error = NULL, target_path = ?3 WHERE id = ?1",
@@ -375,6 +385,20 @@ mod tests {
     fn schema_version_is_1() {
         let s = Store::open_in_memory().unwrap();
         assert_eq!(s.schema_version().unwrap(), 1);
+    }
+
+    #[test]
+    fn start_if_queued_only_starts_queued_rows() {
+        let s = Store::open_in_memory().unwrap();
+        let a = s.insert_download(&nd(Priority::Normal)).unwrap();
+        let b = s.insert_download(&nd(Priority::Normal)).unwrap();
+        s.set_state(b, DownloadState::Paused, None).unwrap();
+        assert!(s.start_if_queued(a).unwrap());
+        assert_eq!(s.get_download(a).unwrap().state, DownloadState::Running);
+        assert!(!s.start_if_queued(a).unwrap(), "already running");
+        assert!(!s.start_if_queued(b).unwrap(), "paused must stay paused");
+        assert_eq!(s.get_download(b).unwrap().state, DownloadState::Paused);
+        assert!(!s.start_if_queued(9999).unwrap(), "gone");
     }
 
     #[test]

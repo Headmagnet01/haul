@@ -114,17 +114,9 @@ fn numbered(file_name: &str, n: u32) -> String {
     }
 }
 
-/// The first of `name`, `name (1)`, `name (2)`… that does not exist in `dir`.
-pub fn unique_path(dir: &Path, file_name: &str) -> PathBuf {
-    let first = dir.join(file_name);
-    if !first.exists() {
-        return first;
-    }
-    (1..).map(|n| dir.join(numbered(file_name, n))).find(|p| !p.exists()).unwrap()
-}
-
-/// Like `unique_path`, but atomically creates an empty placeholder there so two
-/// downloads finishing at the same moment can never pick the same name.
+/// The first of `name`, `name (1)`, `name (2)`... that does not exist in `dir`. It atomically
+/// creates an empty placeholder there, so two downloads finishing at the same moment can
+/// never pick the same name.
 pub fn reserve_unique_path(dir: &Path, file_name: &str) -> std::io::Result<PathBuf> {
     for n in 0u32.. {
         let p = if n == 0 { dir.join(file_name) } else { dir.join(numbered(file_name, n)) };
@@ -207,17 +199,6 @@ mod tests {
     }
 
     #[test]
-    fn unique_path_counts_up() {
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("a.bin"), b"").unwrap();
-        std::fs::write(dir.path().join("a (1).bin"), b"").unwrap();
-        assert_eq!(unique_path(dir.path(), "a.bin"), dir.path().join("a (2).bin"));
-        std::fs::write(dir.path().join("README"), b"").unwrap();
-        assert_eq!(unique_path(dir.path(), "README"), dir.path().join("README (1)"));
-        assert_eq!(unique_path(dir.path(), "new.txt"), dir.path().join("new.txt"));
-    }
-
-    #[test]
     fn reserve_unique_path_creates_placeholder() {
         let dir = tempfile::tempdir().unwrap();
         let a = reserve_unique_path(dir.path(), "x.zip").unwrap();
@@ -225,6 +206,8 @@ mod tests {
         assert_eq!(a, dir.path().join("x.zip"));
         assert_eq!(b, dir.path().join("x (1).zip"));
         assert!(a.exists() && b.exists());
+        std::fs::write(dir.path().join("README"), b"").unwrap();
+        assert_eq!(reserve_unique_path(dir.path(), "README").unwrap(), dir.path().join("README (1)"));
     }
 
     #[test]

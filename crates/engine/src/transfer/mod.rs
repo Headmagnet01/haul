@@ -8,7 +8,7 @@ use crate::events::EventBus;
 use crate::naming::{part_path, reserve_unique_path, sanitize_filename};
 use crate::probe::probe;
 use crate::ratelimit::{HostLimiter, RateLimiter};
-use crate::segmenter::{MIB, Range, initial_plan};
+use crate::segmenter::{BYTES_PER_INITIAL_CONN, MIB, Range, initial_plan};
 use crate::store::Store;
 use crate::types::{DownloadId, DownloadState, Event, ProbeInfo};
 use conn::{ConnExit, Env, io_error};
@@ -97,6 +97,8 @@ pub fn state_for_error(e: &EngineError) -> DownloadState {
     match e {
         EngineError::Offline => DownloadState::Offline,
         EngineError::LinkExpired(_) => DownloadState::LinkExpired,
+        // Not a failure: the user frees space and resumes.
+        EngineError::DiskFull => DownloadState::Paused,
         _ => DownloadState::Failed,
     }
 }
@@ -222,8 +224,6 @@ async fn transfer(job: &TransferJob, ctx: &TransferCtx) -> Result<Option<PathBuf
                 fresh.file_name.clone()
             }
         };
-        ctx.store.set_probe(id, &fresh)?;
-
         std::fs::create_dir_all(&d.target_dir)?;
         let part = part_path(&d.target_dir, &name, id);
         let size = fresh.size;
@@ -243,6 +243,12 @@ async fn transfer(job: &TransferJob, ctx: &TransferCtx) -> Result<Option<PathBuf
             }
             why.is_none()
         };
+        // Forget stale progress before storing the new fingerprint, so an exit from
+        // here on can never pair old bytes with the new file's probe.
+        if !resume && !saved.is_empty() {
+            ctx.store.save_segments(id, &[])?;
+        }
+        ctx.store.set_probe(id, &fresh)?;
         old_probe = Some(fresh.clone());
 
         let ranges = match size {
@@ -250,9 +256,10 @@ async fn transfer(job: &TransferJob, ctx: &TransferCtx) -> Result<Option<PathBuf
             Some(s) if resumable => initial_plan(s, d.connections),
             _ => vec![Range { start: 0, pos: 0, end: size.unwrap_or(u64::MAX) }],
         };
-        let written: u64 = ranges.iter().map(|r| r.pos - r.start).sum();
+        // The part file is sized up front, so only the growth past its current length is new space.
+        let allocated = std::fs::metadata(&part).map(|m| m.len()).unwrap_or(0);
         if let Some(s) = size
-            && s - written.min(s) > free_space(ctx, &d.target_dir)?
+            && s.saturating_sub(allocated) > free_space(ctx, &d.target_dir)?
         {
             return Err(EngineError::DiskFull);
         }
@@ -263,8 +270,13 @@ async fn transfer(job: &TransferJob, ctx: &TransferCtx) -> Result<Option<PathBuf
         }
         let file = Arc::new(file);
 
-        let unfinished = ranges.iter().filter(|r| !r.is_done()).count().max(1);
-        let conns = if resumable { (d.connections.clamp(1, 32) as usize).min(unfinished) } else { 1 };
+        // As many connections as a fresh plan of the remaining bytes would get (the extras steal),
+        // but never fewer than the unfinished ranges.
+        let unfinished = ranges.iter().filter(|r| !r.is_done()).count();
+        let remaining: u64 = ranges.iter().map(|r| r.remaining()).sum();
+        let by_size = (remaining / BYTES_PER_INITIAL_CONN) as usize;
+        let conns =
+            if resumable { (d.connections.clamp(1, 32) as usize).min(unfinished.max(by_size)).max(1) } else { 1 };
         let env = Arc::new(Env {
             id,
             client: ctx.client.clone(),
@@ -360,6 +372,13 @@ async fn run_pass(ctx: &TransferCtx, env: &Arc<Env>, conns: usize, size: Option<
     loop {
         tokio::select! {
             joined = set.join_next() => match joined {
+                // Everyone left cleanly but a range is still open: a connection shed itself
+                // (429) while the last peer was already on its way out. Start a fresh one.
+                None if first_err.is_none() && !env.cancel.is_cancelled() && !env.table.lock().unwrap().all_done() => {
+                    tracing::debug!(id = env.id, "all connections left early; starting one more");
+                    env.active.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    set.spawn(conn::worker(env.clone(), conns));
+                }
                 None => break,
                 Some(Ok(Ok(()))) => {}
                 Some(Ok(Err(exit))) => {
@@ -404,7 +423,8 @@ async fn run_pass(ctx: &TransferCtx, env: &Arc<Env>, conns: usize, size: Option<
 }
 
 /// Measures each live response over `slow_window` and cancels the ones running below
-/// `slow_ratio` x the median. Their ranges stay in the table for a fresh connection.
+/// `slow_ratio` x the median, or that received nothing at all. Their ranges stay in the
+/// table for a fresh connection.
 fn kill_slow_connections(env: &Env, cfg: &TransferConfig, hist: &mut HashMap<u64, VecDeque<(Instant, u64)>>) {
     let now = Instant::now();
     let window = cfg.slow_window;
@@ -423,6 +443,21 @@ fn kill_slow_connections(env: &Env, cfg: &TransferConfig, hist: &mut HashMap<u64
         if now.duration_since(l.since) >= window && dt >= window.mul_f64(0.9) {
             speeds.push((k, (b1 - b0) as f64 / dt.as_secs_f64()));
         }
+    }
+    // A response that delivered nothing for a whole window is stalled, even when every
+    // connection is (so there's no healthy median to compare against). Under a speed limit
+    // a connection can legitimately sit out a window waiting for tokens, so skip it then.
+    let limited = env.global.rate().is_some() || env.local.rate().is_some();
+    if !limited {
+        speeds.retain(|&(k, bps)| {
+            if bps > 0.0 {
+                return true;
+            }
+            tracing::debug!(id = env.id, "replacing stalled connection");
+            live[&k].kill.cancel();
+            hist.remove(&k);
+            false
+        });
     }
     if speeds.len() < 2 {
         return;

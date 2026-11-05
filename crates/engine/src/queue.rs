@@ -4,7 +4,7 @@ use crate::error::EngineError;
 use crate::naming::part_path;
 use crate::schedule::{Schedule, is_within_window};
 use crate::store::NewDownload;
-use crate::transfer::{TransferCtx, TransferJob, TransferOutcome, run_transfer};
+use crate::transfer::{TransferCtx, TransferJob, run_transfer};
 use crate::types::{DownloadId, DownloadState, Event, Priority};
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst};
@@ -90,7 +90,9 @@ impl Queue {
     }
 
     pub fn pause(&self, id: DownloadId) {
-        if let Some(r) = self.inner.running.lock().unwrap().get(&id) {
+        // Held throughout, so the dispatcher can't start this row between the check and the write.
+        let running = self.inner.running.lock().unwrap();
+        if let Some(r) = running.get(&id) {
             r.cancel.cancel();
             return;
         }
@@ -116,12 +118,16 @@ impl Queue {
 
     /// Stops it if running, then deletes the row and its part file. Finished files are never touched.
     pub fn remove(&self, id: DownloadId) {
-        if let Some(r) = self.inner.running.lock().unwrap().get_mut(&id) {
-            r.removing = true;
-            r.cancel.cancel();
-            return;
+        {
+            // Held throughout, like `pause`, so a row being removed is never started.
+            let mut running = self.inner.running.lock().unwrap();
+            if let Some(r) = running.get_mut(&id) {
+                r.removing = true;
+                r.cancel.cancel();
+                return;
+            }
+            delete_row_and_part(&self.inner.ctx, id);
         }
-        delete_row_and_part(&self.inner.ctx, id);
         self.inner.wake.notify_one();
     }
 
@@ -219,7 +225,8 @@ fn dispatch(inner: &Arc<Inner>) {
         if running.len() >= max {
             break;
         }
-        if running.contains_key(&d.id) {
+        // The snapshot may be stale: a pause or remove may have landed since it was read.
+        if running.contains_key(&d.id) || !inner.ctx.store.start_if_queued(d.id).unwrap_or(false) {
             continue;
         }
         let cancel = CancellationToken::new();
@@ -228,17 +235,10 @@ fn dispatch(inner: &Arc<Inner>) {
         let inner2 = inner.clone();
         let id = d.id;
         tokio::spawn(async move {
-            let out = run_transfer(TransferJob { id, cancel }, &inner2.ctx).await;
+            run_transfer(TransferJob { id, cancel }, &inner2.ctx).await;
             let removing = inner2.running.lock().unwrap().remove(&id).is_some_and(|r| r.removing);
             if removing {
                 delete_row_and_part(&inner2.ctx, id);
-            } else if let TransferOutcome::Failed(EngineError::DiskFull) = out {
-                let _ = inner2.ctx.store.set_state(id, DownloadState::Paused, Some("Disk full"));
-                inner2.ctx.events.send(Event::StateChanged {
-                    id,
-                    state: DownloadState::Paused,
-                    error: Some("Disk full".into()),
-                });
             }
             inner2.wake.notify_one();
         });

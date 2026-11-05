@@ -3,7 +3,7 @@
 pub const MIB: u64 = 1024 * 1024;
 pub const MIN_STEAL: u64 = MIB;
 /// One connection per this many bytes, at first.
-const BYTES_PER_INITIAL_CONN: u64 = 4 * MIB;
+pub(crate) const BYTES_PER_INITIAL_CONN: u64 = 4 * MIB;
 /// Range boundaries are rounded down to this, so writes stay aligned.
 const ALIGN: u64 = 64 * 1024;
 

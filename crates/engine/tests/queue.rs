@@ -198,7 +198,7 @@ async fn disk_full_pauses() {
     let q = Queue::start(c.clone(), 1);
     let a = q.add(nd(&srv.url, dir.path(), Priority::Normal)).unwrap();
     wait_state(&c.store, a, DownloadState::Paused, 5).await;
-    assert_eq!(c.store.get_download(a).unwrap().error.as_deref(), Some("Disk full"));
+    assert_eq!(c.store.get_download(a).unwrap().error.as_deref(), Some("disk full"));
 }
 
 #[tokio::test]

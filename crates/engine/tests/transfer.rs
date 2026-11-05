@@ -403,3 +403,18 @@ async fn too_many_requests_single_connection_retries() {
     let p = completed(run(&c, id).await);
     assert_file_eq(&p, 1_000_000);
 }
+
+/// Every connection freezes mid-response. They must be replaced after `slow_window`
+/// with no bytes, not after the 30 s read timeout.
+#[tokio::test]
+async fn stalled_connections_replaced() {
+    let len = 8 * MIB as usize;
+    let mut spec = Spec::new(len);
+    spec.stall_after = Some(300_000);
+    let srv = serve(spec).await;
+    let dir = tempfile::tempdir().unwrap();
+    let c = ctx(16, TransferConfig::for_tests());
+    let id = add(&c, &srv.url, dir.path(), 2, None);
+    let out = tokio::time::timeout(Duration::from_secs(5), run(&c, id)).await.expect("stalled past 5 s");
+    assert_file_eq(&completed(out), len);
+}
