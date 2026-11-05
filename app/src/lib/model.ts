@@ -44,7 +44,7 @@ export function buildList(snap: Snapshot, opts: ListOpts): ListItem[] {
   return out;
 }
 
-/** Applies a batched update in place. Anything unknown means the UI is stale: reload a snapshot. */
+/** Applies a batched update in place. Anything unknown, or a finished download, means: reload a snapshot. */
 export function applyUpdate(byId: Map<number, DownloadView>, speeds: Map<number, number>, u: Update): { resync: boolean } {
   let resync = u.resync;
   for (const p of u.progress) {
@@ -67,6 +67,8 @@ export function applyUpdate(byId: Map<number, DownloadView>, speeds: Map<number,
     d.state = s.state;
     d.error = s.error;
     if (s.state !== 'running') speeds.delete(s.id);
+    // The saved file's final path (and a late-known size) only arrive with a snapshot.
+    if (s.state === 'completed') resync = true;
   }
   for (const s of u.steals) if (!byId.has(s.id)) resync = true;
   return { resync };

@@ -1,6 +1,6 @@
 # Haul: handoff
 
-Last updated: 5 Nov 2026. Plan 1 (engine core) is done, reviewed and merged. Plan 2 is written but not started.
+Last updated: 5 Nov 2026. Plan 1 (engine core) is merged. Plan 2 (Tauri shell + Queue UI) is built on `feat/shell-queue-ui`: all 10 tasks are done and every check is green. A whole-branch review and the merge into `master` are still to come.
 
 ## What Haul is
 A free, open-source Windows download manager. It pairs IDM's fast engine and browser capture with JDownloader 2's link collector, packages and auto-extraction, in a calm "dispatch board" interface.
@@ -12,40 +12,60 @@ A free, open-source Windows download manager. It pairs IDM's fast engine and bro
 ## Where things stand
 | | |
 |---|---|
-| Branch | `master`. Plan 1 (`feat/engine-core`) is merged, including the post-review fixes. No Git remote exists. |
-| Done | Plan 1, the engine core: `docs/superpowers/plans/2026-11-05-haul-plan-1-engine-core.md`, Tasks 0–10. |
-| Tests | 87 tests, green 6 runs in a row after the review fixes. `cargo clippy -- -D warnings` is clean. |
-| Real-world check | 100 MB from `sin-speed.hetzner.com`: correct SHA-256, resumed after a hard kill, never overwrote an existing file. |
-| Next | Execute plan 2 (Tauri shell + Queue UI): `docs/superpowers/plans/2026-11-05-haul-plan-2-shell-queue-ui.md`. Two owner answers come first; see "Plan 2: before you start". |
+| Branch | `feat/shell-queue-ui`, cut from `master` at `34e6ab9`. Not merged yet. No Git remote exists. |
+| Done | Plan 1 (engine core) and plan 2 (`docs/superpowers/plans/2026-11-05-haul-plan-2-shell-queue-ui.md`, Tasks 1–10). |
+| Tests | Rust: 108 (97 engine + 11 app). Front end: 34 Vitest unit tests and 27 Playwright e2e tests, run in both light and dark (54 runs). Clippy, rustfmt and svelte-check are clean. |
+| Real-app check | Smoke test against the real app (`npm run smoke`): add, pause at 30%+, resume and complete; the SHA-256 matches. Closing the window mid-download and relaunching showed the row Paused, and Space resumed it with ranged requests starting mid-range, not from 0. |
+| Next | 1. A fresh whole-branch review of plan 2, then merge into `master`. 2. Plan 3: the Collector and clipboard watching (spec section 5). |
 
-## Plan 2: before you start
-**The plan:** 10 test-first tasks, from spec **section 7** (user interface) and milestone 3, plus `DESIGN.md` and the mockup.
-- The old note here said "sections 5–6"; that was wrong. Sections 5–6 are the Collector (plan 3) and the extension (plan 5).
-- Execution branches off `master`, e.g. `feat/shell-queue-ui`.
+## The app, and how to run it
+- **Real app:** `cd app` and `npx tauri dev`. The window is titled Haul, 1280×800 by default.
+  - The database is `%APPDATA%\dev.haul.desktop\haul.db` and the logs are in `%LOCALAPPDATA%\dev.haul.desktop\logs\`.
+  - Closing the window pauses and saves every download, then quits.
+- **Browser mock, no Rust needed:** `cd app`, then `npm run dev:mock`, then open `http://localhost:5174/?demo=1`.
+  - `?demo=1` seeds the mockup's rows. Without it you get the empty state.
+  - The mock simulates the engine: a new link takes about 6 s, and a URL containing `404` or `expired` fails the matching way.
+- **Front-end checks, run in `app/`:** `npm test` (Vitest), `npm run check` (svelte-check) and `npm run e2e` (Playwright on the installed Edge).
+- **Real-app smoke test.** Use three shells:
+  1. `node scripts/range-server.mjs 8765`
+  2. `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9222 npx tauri dev`
+  3. `npm run smoke`
+  - The smoke files go to the app's save folder. Point `download_dir` in the settings table at a scratch folder first, or they land in your Downloads.
+- **Layout of `app/`:**
+  - `src-tauri/`: the `haul-app` crate.
+    - `core.rs`: the commands as plain methods.
+    - `dto.rs`: what the UI sees.
+    - `bridge.rs`: batches engine events into one `haul:update` every 250 ms and asks for a resync when it falls behind.
+    - `commands.rs` and `lib.rs`: Tauri glue.
+  - `src/lib/`: pure TypeScript, unit-tested: format, status, strip, model (list building, updates, moves and drops), speeds, keys and sparkline. It also holds `backend*.ts` (the interface, Tauri and the mock) and `app-state.svelte.ts` (all Queue state).
+  - `src/components/`: the Svelte views.
 
-**Waiting on the owner (ask before Task 2):**
-1. **Install approval.**
-   - Task 2 installs, all inside `app/` and the Cargo cache: npm packages (Tauri CLI and API, Svelte 5, Vite, TypeScript, Vitest, Playwright, axe-core, the IBM Plex fonts; a few hundred MB in `node_modules`) and the Tauri Rust crates.
-   - Playwright uses the installed Edge (`channel: 'msedge'`), so it downloads no browsers.
-2. **Execution method.**
-   - Native: the session builds every task, then one fresh whole-branch review. This was recommended, since the tasks share interfaces tightly.
-   - Subagent-driven: a fresh implementer and reviewer per task.
-   - Either way, the "write the code yourself, no worker delegation" agreement below still holds.
-
-**Toolchain already on this PC** (checked 5 Nov 2026):
-- Node 24.22, npm 11.2 and bun 1.4.
-- No global Tauri CLI; the plan uses `npx tauri` from the dev dependency.
-- WebView2 and Edge come with Windows 11.
-
-**Plan 2 rulings made while writing it** (full list at the end of the plan):
-- **AA contrast fix.**
-  - `--ink-3` becomes `#6B6559` light and `#8F8B82` dark; the old values are 2.8:1 and 3.3:1.
-  - Status words use `--ink-2`, with the colour on the icon, because orange or green text fails AA in light mode.
-  - Task 2 updates `DESIGN.md` to match.
-- **Pasted links queue directly** until plan 3 adds the Collector. Several links become one package named `Pasted list · <d Mon HH:MM>`.
-- **Working controls only:** no clipboard toggle (plan 3) and no "When done" or tray (plan 6). Closing the window quits cleanly.
-- **Speeds are per range:** the drawer's per-connection speeds are measured per range in the UI.
-- **Engine additions (Task 1):** `extract_links`, `Store::reorder` and `Queue::reorder`, `Store::list_packages`, and `Download.created_at`.
+## Plan 2 rulings (decisions made on the owner's behalf)
+Each line says what it costs if the decision is wrong.
+- **Contrast** (from the plan): `--ink-3` is `#6B6559` light and `#8F8B82` dark. Status words are `--ink-2`, with the colour on the icon. `DESIGN.md` is updated. The a11y test fails on the old colours. Cost: labels a little darker than the mockup.
+- **Pasted links queue directly** until plan 3 adds the Collector. Two or more links make a `Pasted list · d Mon HH:MM` package. Cost: no duplicate or online check yet.
+- **TypeScript is pinned to 5.** npm picked 7.0, the native port, which svelte-check can't use yet. Cost: an upgrade later.
+- **Columns are narrower than the mockup's.** The mockup's minimum widths add up to 870px, but the list area is only 732px at the default window size, so Status was cut off. Below about 1180px the list scrolls sideways inside itself. Cost: a narrower name column.
+- **Sparkline:** the plan's formula contradicted its own test, so the test won: the peak sits 10% below the top. Cost: none.
+- **Reorder rules** (`planMove`/`planDrop` in `model.ts`):
+  - A package moves as a block, and a file inside a package moves among its siblings.
+  - A dropped row takes the target's place.
+  - A moved row takes its new neighbour's priority.
+  - A file dragged out of a package stays in its package.
+  - Cost: a drag may land one row off what someone expects.
+- **Remove:** Remove waits 6 s for Undo. A removal still pending when the app closes is never sent, so the row survives. Cost: the user deletes it again.
+- **Native drag-and-drop is off** (`dragDropEnabled: false`) so HTML5 drops of links and `.txt` files reach the page. Cost: none until something needs native file drops.
+- **Fixes from the smoke run, each test-first:**
+  - Finished rows now reload a snapshot, so they learn their saved path.
+  - Finished rows show the name on disk, e.g. `file (3).bin`.
+- **Smoke server throttle:** 1 MB/s per response, so a test can pause at 30%. Cost: none.
+- **Smaller calls:**
+  - The snapshot hides packages that have no downloads left.
+  - The demo seed adds a running `.msi` row.
+  - The speed-limit label reads "10 MB/s".
+  - Speed history gets one sample per update.
+  - The drawer has a Remove button.
+  - The full list with reasons is in `.superpowers/sdd/2026-11-05-haul-plan-2-shell-queue-ui/progress.md` (git-ignored).
 
 ## How to build and test
 The toolchain is already installed on this PC:
@@ -56,13 +76,13 @@ New shells may not have cargo on PATH:
 ```bash
 export PATH="$HOME/.cargo/bin:$PATH"
 ```
-Run the tests (about 15 s):
+Run the Rust tests for the engine and the app (about 20 s):
 ```bash
-cargo test -p haul-engine
+cargo test --workspace
 ```
 Run clippy:
 ```bash
-cargo clippy -p haul-engine --all-targets -- -D warnings
+cargo clippy --workspace --all-targets -- -D warnings
 ```
 Download a real file with the CLI example:
 ```bash
@@ -95,7 +115,7 @@ How `transfer/` works:
 - **Fallbacks:** if the server ignores ranges, it falls back to one sequential connection. A 416 restarts once.
 - **Resume:** before resuming it checks the fingerprint (ETag, then Last-Modified, then size).
 
-## Decisions made on the owner's behalf (rulings)
+## Plan 1 rulings (engine)
 Each line says what it costs if the decision is wrong.
 - **reqwest TLS:** uses `rustls-no-provider` plus `rustls` with **ring**, not the default aws-lc, so the build needs no cmake or NASM. Cost: none; switching back is a feature flag.
 - **Part file name:** `<name>.<id>.haulpart`, not the spec's `<name>.haulpart`, so two same-name downloads can't collide. Cost: none.
@@ -112,13 +132,13 @@ Each line says what it costs if the decision is wrong.
 - **Kill-and-resume check:** it was done with a hard kill, not Ctrl+C, because Git Bash can't send Ctrl+C to a native exe. Cost: the CLI's Ctrl+C path hasn't been tried by hand.
 - **Formatting:** added `rustfmt.toml` (max width 120). Cost: none.
 
-## Known minors, deferred
+## Known minors, deferred (plan 1)
 - **`AllDone` fires too often:** it also fires when the user pauses every download, so plan 6 ("when done") must check states before acting on it.
 - **Stalls under a speed limit:** the stall rule (no bytes for `slow_window` → reconnect) is off while a speed limit is set, so a stall there still waits for the 30 s read timeout.
 - **Crash during finish:** a crash between the final rename and `set_completed` re-downloads the file as `name (1)`. Fix: store `target_path` before the rename and check it on recovery.
 - **Schedule vs. manual pause:** when a schedule window opens, it re-queues every download it auto-paused, even one the user has since decided to keep paused. This needs an owner decision. It was raised with them and is still open; settle it with the schedule settings in plan 6.
 
-## Post-review fixes (5 Nov 2026)
+## Plan 1 post-review fixes (5 Nov 2026)
 `/code-review` (high) ran on the branch. Fixed, each with a test that failed first except the 429 race:
 - A changed file could resume onto stale bytes after an early failure.
 - Resume used too few connections.

@@ -63,6 +63,12 @@ describe('applyUpdate', () => {
     expect(byId.get(1)!.error).toBe('disk full');
     expect(speeds.has(1)).toBe(false);
   });
+  test('completion_requests_resync (the final path only comes with a snapshot)', () => {
+    const byId = new Map(snap().downloads.map((d) => [d.id, d]));
+    const speeds = new Map<number, number>();
+    expect(applyUpdate(byId, speeds, upd({ states: [{ id: 1, state: 'completed', error: null }] }))).toEqual({ resync: true });
+    expect(byId.get(1)!.state).toBe('completed');
+  });
   test('unknown_id_requests_resync', () => {
     const byId = new Map(snap().downloads.map((d) => [d.id, d]));
     const speeds = new Map<number, number>();

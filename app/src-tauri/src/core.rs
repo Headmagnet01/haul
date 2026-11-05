@@ -46,6 +46,12 @@ fn parse_priority(s: &str) -> Result<Priority, EngineError> {
 }
 
 fn display_name(d: &Download) -> String {
+    // A finished file may have been saved as "name (1).ext"; show what is on disk.
+    if d.state == DownloadState::Completed
+        && let Some(n) = d.target_path.as_deref().and_then(|p| p.file_name()).map(|n| n.to_string_lossy())
+    {
+        return n.into_owned();
+    }
     if let Some(n) = d.file_name.as_deref().filter(|n| !n.is_empty()) {
         return n.to_string();
     }
@@ -315,6 +321,20 @@ mod tests {
         assert!(c.set_priority(id, "urgent").is_err());
         c.set_priority(id, "high").unwrap();
         assert_eq!(c.snapshot().unwrap().downloads[0].priority, "high");
+    }
+
+    #[tokio::test]
+    async fn completed_row_shows_saved_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open_in_memory().unwrap();
+        let c = core(store.clone(), dir.path());
+        c.add_links("https://a.org/f.bin").unwrap();
+        let id = c.snapshot().unwrap().downloads[0].id;
+        let saved = dir.path().join("f (1).bin");
+        store.set_completed(id, &saved).unwrap();
+        let d = &c.snapshot().unwrap().downloads[0];
+        assert_eq!(d.name, "f (1).bin");
+        assert_eq!(c.folder_target(id).unwrap(), FolderTarget::RevealFile(saved));
     }
 
     #[tokio::test]
