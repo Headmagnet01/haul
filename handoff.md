@@ -1,6 +1,6 @@
 # Haul: handoff
 
-Last updated: 6 Nov 2026. Plans 1 (engine core) and 2 (Tauri shell + Queue UI) are merged into `master`. Plan 3 (Collector + clipboard) is built on `feat/collector`: all 8 tasks are done and every check is green. Its final whole-branch review and the merge are next.
+Last updated: 6 Nov 2026. Plans 1 (engine core) and 2 (Tauri shell + Queue UI) are merged into `master`. Plan 3 (Collector + clipboard) is built on `feat/collector`: all 8 tasks are done, a fresh reviewer read the whole branch, its Important findings are fixed test-first, and every check is green. Not merged yet.
 
 ## What Haul is
 A free, open-source Windows download manager. It pairs IDM's fast engine and browser capture with JDownloader 2's link collector, packages and auto-extraction, in a calm "dispatch board" interface.
@@ -14,9 +14,9 @@ A free, open-source Windows download manager. It pairs IDM's fast engine and bro
 |---|---|
 | Branch | `feat/collector`, cut from `master` at `f361f6b` (plan 2 merged at `621d27d`). Not merged yet. No Git remote exists. |
 | Done | Plans 1 and 2 (merged), and plan 3 (`docs/superpowers/plans/2026-11-05-haul-plan-3-collector-clipboard.md`, Tasks 1–8). |
-| Tests | Rust: 156 tests (engine + app). Front end: 56 Vitest unit tests and 38 Playwright e2e tests, run in both light and dark (76 runs), plus 3 real-app smoke tests. Clippy, rustfmt and svelte-check are clean. |
+| Tests | Rust: 162 tests (engine + app). Front end: 57 Vitest unit tests and 39 Playwright e2e tests, run in both light and dark (78 runs), plus 3 real-app smoke tests (last run before the review fixes). Clippy, rustfmt and svelte-check are clean. |
 | Real-app check | `npm run smoke` (6 Nov): a pasted link goes through the Collector (checked Online, started), then pause at 30%+, resume and complete with a matching SHA-256; removing a running download leaves no ghost; a link copied with `Set-Clipboard` while Watch clipboard is on reaches the Collector marked Clipboard. Graceful window close was not re-checked in this run: the app ran on a desktop the tools could not send window messages to (plan 2 checked it). |
-| Next | 1. Final whole-branch review of `feat/collector`, then merge into `master`. 2. Plan 4: post-processing (verify, extract, sort) and the Rules UI (spec section 5). |
+| Next | 1. Close the real app once by hand (X button) and check the log says "Haul exiting", then rerun `npm run smoke` (the review fixes changed the engine and clipboard filter after the last smoke run). 2. Merge `feat/collector` into `master` (owner's go-ahead). 3. Plan 4: post-processing (verify, extract, sort) and the Rules UI (spec section 5). |
 
 ## The app, and how to run it
 - **Real app:** `cd app` and `npx tauri dev`. The window is titled Haul, 1280×800 by default.
@@ -62,6 +62,28 @@ A free, open-source Windows download manager. It pairs IDM's fast engine and bro
   - Chip toggles sent the reactive proxy; the mock could not copy it and silently rolled back (caught by e2e `filter_chip_hides_and_persists`).
   - **Watch clipboard broke copying in other apps:** reading the clipboard the instant it changed made multi-step copies (.NET/OLE apps, `Set-Clipboard`) fail. The watcher now waits 150 ms before reading (caught by the real-app clipboard smoke test, which failed 3 of 3 before and passes 3 of 3 after).
 - **Smoke server:** `scripts/range-server.mjs` now serves any `/<name>.bin` path (the same 64 MiB file).
+- **Database:** schema version 3. Migration 3 adds `collector_archives` (the Queue package an archive set became). The dev DB in `%APPDATA%\dev.haul.desktop` is already at version 2 from the smoke run; the app moves it to 3 on next launch.
+
+## Plan 3 review (6 Nov 2026)
+A fresh reviewer read the whole branch: no Critical findings, 4 Important, 11 Minor. Each fix below has a test that failed first.
+- **Two starts at once queued every link twice** (double click, held Enter). The `Grabber` now makes intake, start, remove and recheck take turns, and the UI ignores a second start while one is running and held-key repeats of Enter. Tests: `concurrent_starts_queue_each_link_once`, `double_start_calls_backend_once`.
+- **Two pastes at once added the same links twice.** Same lock; a batch's links also insert in one transaction (a 500-link paste is now one commit). Test: `concurrent_intakes_add_each_link_once`.
+- **Archive parts copied one at a time never formed one package.** Archive sets now group across every waiting link, and a part that arrives after its siblings were started joins their Queue package (while that package still has downloads). Tests: `archive_parts_from_separate_intakes_join`, `late_part_joins_started_package`, `archive_package_needs_live_downloads`.
+- **No mouse way to remove a link.** Every Collector row and package has an × Remove button (with Undo). Test: e2e `remove_button_removes_with_undo`.
+- **Copying the same link again later was ignored for ever** (a reviewer Minor, re-graded Important because the main clipboard flow failed silently). Only a repeat within 2 s is ignored now. Test: `filter_accepts_same_text_again_later`.
+
+Deferred minors from the review, each a small follow-up:
+- Links removed from the Collector still get their queued probe (up to 8 at a time, 20 s each).
+- A recheck pressed while a check is running can let the older result win.
+- A non-archive package started one link at a time can split in the Queue (the last link becomes a lone link).
+- If `queue.add` fails partway through a start, the links already queued stay in the Collector too.
+- A package's key changes when a check learns the real file name, which drops its selection and collapsed state.
+- Enter in a future `<select>` or contentEditable starts the selection (`CollectorView` checks only INPUT/TEXTAREA).
+- Deleting an expanded package leaves nothing selected instead of the next package.
+- The watcher does not honour password managers' "exclude from clipboard monitoring" formats.
+- The 1 MB clipboard limit is checked after `arboard` has read the whole text.
+- A failed `collector_remove` leaves the links hidden until restart, with no message.
+- Plus the plan 2 minors still open (error toasts, startup dialog, and the rest listed below).
 
 ## Plan 2 rulings (decisions made on the owner's behalf)
 Each line says what it costs if the decision is wrong.
