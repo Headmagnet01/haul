@@ -109,6 +109,9 @@ pub struct Grabber {
     events: EventBus,
     probe: ProbeFn,
     permits: Arc<Semaphore>,
+    /// Intake, start, remove and recheck read the Collector and then change it; they take turns,
+    /// so two quick Enters or two pastes can't queue or add the same link twice.
+    turn: Arc<std::sync::Mutex<()>>,
     /// Lets intake run on threads outside the runtime, such as the clipboard watcher.
     rt: tokio::runtime::Handle,
 }
@@ -146,6 +149,7 @@ impl Grabber {
             events,
             probe,
             permits: Arc::new(Semaphore::new(PROBE_SLOTS)),
+            turn: Arc::new(std::sync::Mutex::new(())),
             rt: tokio::runtime::Handle::current(),
         };
         match g.store.list_links() {
@@ -155,6 +159,10 @@ impl Grabber {
             Err(e) => tracing::warn!(error = %e, "could not reload collector links"),
         }
         g
+    }
+
+    fn take_turn(&self) -> std::sync::MutexGuard<'_, ()> {
+        self.turn.lock().unwrap_or_else(|e| e.into_inner())
     }
 
     fn changed(&self) {
@@ -176,6 +184,7 @@ impl Grabber {
 
     /// Adds links as one batch and starts checking them. Links already waiting are skipped.
     pub fn intake(&self, links: Vec<String>, source: &str) -> Result<IntakeResult, EngineError> {
+        let _turn = self.take_turn();
         let mut seen: HashSet<String> = self.store.list_links()?.into_iter().map(|l| l.url).collect();
         let total = links.len();
         let fresh: Vec<String> = links.into_iter().filter(|u| seen.insert(u.clone())).collect();
@@ -184,10 +193,7 @@ impl Grabber {
             return Ok(IntakeResult { added: 0, skipped });
         }
         let batch = self.store.create_batch(source, &pasted_label())?;
-        let mut ids = Vec::with_capacity(fresh.len());
-        for url in &fresh {
-            ids.push(self.store.insert_link(batch, url)?);
-        }
+        let ids = self.store.insert_links(batch, &fresh)?;
         for (id, url) in ids.into_iter().zip(fresh.iter()) {
             self.spawn_probe(id, url.clone());
         }
@@ -253,6 +259,7 @@ impl Grabber {
 
     /// Queues the given links (offline and expired ones stay) and removes them from the Collector.
     pub fn start(&self, ids: &[i64], queue: &Queue, d: &StartDefaults) -> Result<usize, EngineError> {
+        let _turn = self.take_turn();
         let wanted: HashSet<i64> = ids.iter().copied().collect();
         let probes: HashMap<i64, ProbeInfo> =
             self.store.list_links()?.into_iter().filter_map(|l| Some((l.id, l.probe?))).collect();
@@ -310,6 +317,7 @@ impl Grabber {
     }
 
     pub fn remove(&self, ids: &[i64]) -> Result<(), EngineError> {
+        let _turn = self.take_turn();
         self.store.delete_links(ids)?;
         self.changed();
         Ok(())
@@ -317,6 +325,7 @@ impl Grabber {
 
     /// Checks the given links again.
     pub fn recheck(&self, ids: &[i64]) -> Result<(), EngineError> {
+        let _turn = self.take_turn();
         let wanted: HashSet<i64> = ids.iter().copied().collect();
         for l in self.store.list_links()?.into_iter().filter(|l| wanted.contains(&l.id)) {
             self.store.set_link_probe(l.id, LinkStatus::Checking, None, None)?;

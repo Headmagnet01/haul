@@ -333,3 +333,34 @@ async fn http_prober_online_and_404() {
     assert_eq!(by(&gone.url).status, LinkStatus::Offline);
     assert_eq!(by(&gone.url).message.as_deref(), Some("404"));
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn concurrent_starts_queue_each_link_once() {
+    let (p, _) = fake(online, 0);
+    let (g, store) = grabber(p);
+    let q = idle_queue(&store);
+    let urls: Vec<String> = (0..60).map(|i| format!("https://a.org/m.part{i}.rar")).collect();
+    g.intake(urls, "paste").unwrap();
+    let s = wait_until(&g, "online", |s| s.links.len() == 60 && all_online(s)).await;
+    let ids: Vec<i64> = s.links.iter().map(|l| l.id).collect();
+    let started: usize = std::thread::scope(|sc| {
+        let hs: Vec<_> = (0..4).map(|_| sc.spawn(|| g.start(&ids, &q, &defaults()).unwrap())).collect();
+        hs.into_iter().map(|h| h.join().unwrap()).sum()
+    });
+    assert_eq!(started, 60);
+    assert_eq!(store.list_downloads().unwrap().len(), 60);
+    q.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn concurrent_intakes_add_each_link_once() {
+    let (p, _) = fake(online, 0);
+    let (g, store) = grabber(p);
+    let urls: Vec<String> = (0..300).map(|i| format!("https://a.org/{i}.bin")).collect();
+    let added: usize = std::thread::scope(|sc| {
+        let hs: Vec<_> = (0..4).map(|_| sc.spawn(|| g.intake(urls.clone(), "paste").unwrap().added)).collect();
+        hs.into_iter().map(|h| h.join().unwrap()).sum()
+    });
+    assert_eq!(added, 300);
+    assert_eq!(store.list_links().unwrap().len(), 300);
+}

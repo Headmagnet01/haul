@@ -41,6 +41,22 @@ impl Store {
         Ok(c.last_insert_rowid())
     }
 
+    /// Adds links to a batch in one transaction, all `checking`; returns their ids in order.
+    pub fn insert_links(&self, batch_id: i64, urls: &[String]) -> Result<Vec<i64>, EngineError> {
+        let mut c = self.lock();
+        let tx = c.transaction()?;
+        let mut ids = Vec::with_capacity(urls.len());
+        {
+            let mut st = tx.prepare("INSERT INTO collector_links (batch_id, url) VALUES (?1, ?2)")?;
+            for u in urls {
+                st.execute(params![batch_id, u])?;
+                ids.push(tx.last_insert_rowid());
+            }
+        }
+        tx.commit()?;
+        Ok(ids)
+    }
+
     pub fn list_batches(&self) -> Result<Vec<Batch>, EngineError> {
         let c = self.lock();
         let mut st = c.prepare("SELECT id, source, label, created_at FROM collector_batches ORDER BY id")?;
