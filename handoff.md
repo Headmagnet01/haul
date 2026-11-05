@@ -12,7 +12,7 @@ A free, open-source Windows download manager. It pairs IDM's fast engine and bro
 ## Where things stand
 | | |
 |---|---|
-| Branch | `feat/engine-core`: 12 commits on top of `master` (`b9f9a64`). **Not merged yet.** No Git remote exists. |
+| Branch | `master`. Plan 1 (`feat/engine-core`) is merged, including the post-review fixes. No Git remote exists. |
 | Done | Plan 1, the engine core: `docs/superpowers/plans/2026-11-05-haul-plan-1-engine-core.md`, Tasks 0–10. |
 | Tests | 87 tests, green 6 runs in a row after the review fixes. `cargo clippy -- -D warnings` is clean. |
 | Real-world check | 100 MB from `sin-speed.hetzner.com`: correct SHA-256, resumed after a hard kill, never overwrote an existing file. |
