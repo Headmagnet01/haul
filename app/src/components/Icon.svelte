@@ -1,8 +1,6 @@
 <script lang="ts" module>
-  export type IconName =
-    | 'queue' | 'collector' | 'finished' | 'rules' | 'settings'
-    | 'dl' | 'ok' | 'err' | 'pause' | 'play' | 'wait'
-    | 'chev' | 'plus' | 'search' | 'folder' | 'link' | 'x';
+  import type { IconName } from '../lib/types';
+  export type { IconName };
 
   // Paths from docs/mockup/index.html where it has them; the rest drawn to match (16px box, 1.5px stroke).
   const PATHS: Record<IconName, { d: string; fill?: boolean }> = {
