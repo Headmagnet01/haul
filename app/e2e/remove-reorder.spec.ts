@@ -1,16 +1,9 @@
 import { expect, test, type Page } from '@playwright/test';
+import { addViaCollector } from './helpers';
 
 const ISO = 'ubuntu-24.04.2-desktop-amd64.iso';
 const fileRows = (page: Page) => page.locator('[role="row"][data-kind="file"]');
 const calls = (page: Page) => page.evaluate(() => (window as unknown as { __haulMockCalls: string[] }).__haulMockCalls);
-
-async function paste(page: Page, text: string) {
-  await page.evaluate((t) => {
-    const dt = new DataTransfer();
-    dt.setData('text/plain', t);
-    document.body.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
-  }, text);
-}
 
 test('delete_then_undo_restores', async ({ page }) => {
   test.setTimeout(20_000);
@@ -51,7 +44,7 @@ test('second_delete_commits_the_first', async ({ page }) => {
 test('alt_arrow_reorders', async ({ page }) => {
   await page.goto('/');
   for (const n of ['one', 'two', 'three']) {
-    await paste(page, `https://a.org/${n}.bin`);
+    await addViaCollector(page, `https://a.org/${n}.bin`);
     await expect(fileRows(page).filter({ hasText: `${n}.bin` })).toHaveCount(1);
   }
   await fileRows(page).filter({ hasText: 'three.bin' }).click();

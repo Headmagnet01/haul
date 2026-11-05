@@ -59,6 +59,14 @@ A **calm dispatch board**. Packages are shipments; the app is the board tracking
 - A package row's strip has one cell per file.
 - The drawer's large map uses vertical fill cells (34px tall). Under it, one line of text describes the latest steal.
 
+## Collector
+- Columns are Name, Size, Online, Source and actions, on the grid `minmax(260px,2fr) 92px 130px 110px 140px` with a 14px gap. The Online column is 130px (the mockup's 110px) so `Link expired (403)` fits.
+- Package rows are 46px on `--bg`; link rows are 40px, and a package's links are indented 26px.
+- The Online cell is a 7px dot plus a word: `--ok` online, `--err` offline, expired or couldn't check, `--idle` with the pulse while checking.
+- Filter chips are 14px-radius pills; a pressed chip is `--ink` on `--surface`. A file-type chip the user added shows pressed and is removed by clicking it.
+- The duplicate badge is a 4px-radius outlined mono tag in `--err` ("Already downloaded", "Already queued", "Also in Collector").
+- The status bar's `Watch clipboard` switch sits after `Speed limit` and uses the same switch style.
+
 ## Motion
 - Progress fills update at most 4 times per second and do not animate between updates.
 - Hover and toggle transitions take 150ms.

@@ -9,6 +9,11 @@ use std::time::Duration;
 /// Larger clipboard text is ignored: it is a copied log or document, not a list of links.
 pub const MAX_CLIPBOARD_BYTES: usize = 1_000_000;
 
+/// How long to wait after a change before reading. Many apps (anything using the OLE clipboard,
+/// such as .NET and Office) finish a copy in more than one step; opening the clipboard in between
+/// makes their copy fail.
+const READ_DELAY: Duration = Duration::from_millis(150);
+
 fn digest(text: &str) -> u64 {
     let mut h = DefaultHasher::new();
     text.hash(&mut h);
@@ -80,6 +85,7 @@ impl ClipboardHandler for Watcher {
         if !self.core.watch_clipboard() {
             return CallbackResult::Next;
         }
+        std::thread::sleep(READ_DELAY);
         if let Some(text) = self.read_text().and_then(|t| self.filter.accept(&t))
             && let Err(e) = self.core.add_links(&text, "clipboard")
         {

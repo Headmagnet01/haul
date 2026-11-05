@@ -1,6 +1,6 @@
 # Haul: handoff
 
-Last updated: 5 Nov 2026. Plan 1 (engine core) is merged. Plan 2 (Tauri shell + Queue UI) is built on `feat/shell-queue-ui`: all 10 tasks are done and reviewed, the review's fixes are in, and every check is green. Only the merge into `master` is left.
+Last updated: 6 Nov 2026. Plans 1 (engine core) and 2 (Tauri shell + Queue UI) are merged into `master`. Plan 3 (Collector + clipboard) is built on `feat/collector`: all 8 tasks are done and every check is green. Its final whole-branch review and the merge are next.
 
 ## What Haul is
 A free, open-source Windows download manager. It pairs IDM's fast engine and browser capture with JDownloader 2's link collector, packages and auto-extraction, in a calm "dispatch board" interface.
@@ -12,11 +12,11 @@ A free, open-source Windows download manager. It pairs IDM's fast engine and bro
 ## Where things stand
 | | |
 |---|---|
-| Branch | `feat/shell-queue-ui`, cut from `master` at `34e6ab9`. Not merged yet. No Git remote exists. |
-| Done | Plan 1 (engine core) and plan 2 (`docs/superpowers/plans/2026-11-05-haul-plan-2-shell-queue-ui.md`, Tasks 1–10). |
-| Tests | Rust: 113 tests (engine + app). Front end: 36 Vitest unit tests and 28 Playwright e2e tests, run in both light and dark (56 runs), plus 2 real-app smoke tests. Clippy, rustfmt and svelte-check are clean. |
-| Real-app check | Smoke test against the real app (`npm run smoke`): add, pause at 30%+, resume and complete; the SHA-256 matches. Closing the window mid-download and relaunching showed the row Paused, and Space resumed it with ranged requests starting mid-range, not from 0. |
-| Next | 1. Merge `feat/shell-queue-ui` into `master`. 2. Plan 3: the Collector and clipboard watching (spec section 5). |
+| Branch | `feat/collector`, cut from `master` at `f361f6b` (plan 2 merged at `621d27d`). Not merged yet. No Git remote exists. |
+| Done | Plans 1 and 2 (merged), and plan 3 (`docs/superpowers/plans/2026-11-05-haul-plan-3-collector-clipboard.md`, Tasks 1–8). |
+| Tests | Rust: 156 tests (engine + app). Front end: 56 Vitest unit tests and 38 Playwright e2e tests, run in both light and dark (76 runs), plus 3 real-app smoke tests. Clippy, rustfmt and svelte-check are clean. |
+| Real-app check | `npm run smoke` (6 Nov): a pasted link goes through the Collector (checked Online, started), then pause at 30%+, resume and complete with a matching SHA-256; removing a running download leaves no ghost; a link copied with `Set-Clipboard` while Watch clipboard is on reaches the Collector marked Clipboard. Graceful window close was not re-checked in this run: the app ran on a desktop the tools could not send window messages to (plan 2 checked it). |
+| Next | 1. Final whole-branch review of `feat/collector`, then merge into `master`. 2. Plan 4: post-processing (verify, extract, sort) and the Rules UI (spec section 5). |
 
 ## The app, and how to run it
 - **Real app:** `cd app` and `npx tauri dev`. The window is titled Haul, 1280×800 by default.
@@ -40,10 +40,33 @@ A free, open-source Windows download manager. It pairs IDM's fast engine and bro
   - `src/lib/`: pure TypeScript, unit-tested: format, status, strip, model (list building, updates, moves and drops), speeds, keys and sparkline. It also holds `backend*.ts` (the interface, Tauri and the mock) and `app-state.svelte.ts` (all Queue state).
   - `src/components/`: the Svelte views.
 
+## Plan 3: the Collector (6 Nov 2026)
+- **How links flow:** clipboard (while Watch clipboard is on), Ctrl+V, drop and the Queue's Add links box all send links to the Collector (`add_links(text, source)`). Each link is checked online, 8 at a time, 20 s timeout. "Start package", a lone row's "Start" or "Start all online" moves links to the Queue.
+- **Where the code is:**
+  - Engine: `crates/engine/src/grabber/` (`grouping.rs` archive parts and names, `dupes.rs` duplicates, `mod.rs` the `Grabber`) and `store/collector.rs` + `store/migration_2.sql` (tables `collector_batches`, `collector_links`, `collector_groups`).
+  - App: commands `collector_snapshot`, `collector_start`, `collector_remove`, `collector_recheck`, `set_collector_filters`, `set_watch_clipboard`; `clipboard.rs` (filter + watcher thread); `haul:update` has `collector: true` when the Collector changed.
+  - UI: `src/lib/collector.ts` (pure), `collector-state.svelte.ts`, `CollectorView`/`CollectorRow`/`FilterChips`; paste and drop live in `App.svelte`.
+- **Settings keys:** `watch_clipboard` (bool, default off) and `collector_filters` (`{html, images, small, duplicates, exts}`, default html + images hidden).
+- **Collector packages are not stored:** they are worked out from the batch and the current file names on every read, so a name learned by the check can move a link into an archive set. A real `packages` row is made on first start and remembered in `collector_groups`.
+- **Rulings** (owner decision first, then calls made on the owner's behalf; cost if wrong in each):
+  - **Watch clipboard starts off** (owner: "you tell me"): with it on, every copied link anywhere gets a request from Haul. Cost: one click to turn it on.
+  - Duplicates are worked out on read, not stored as `duplicate_of`; an exact URL already waiting is skipped, not flagged. Cost: none.
+  - The Grabber keeps a Tokio handle so the clipboard thread can add links. Cost: none.
+  - `arboard` without its image feature. Cost: re-enable later if images are needed.
+  - The mock groups only `.partN.rar`/`.7z.NNN` and has no prefix names; the engine has the real rules. Cost: e2e can't see prefix names (engine tests cover them).
+  - A user file-type chip shows pressed; clicking it removes it. Cost: no way to keep an unpressed custom chip.
+  - The Collector list is a treegrid like the Queue. Cost: an ARIA role swap.
+  - `note_own_write` has no caller yet (Haul copies nothing). Cost: none until a Copy action exists.
+- **Bugs found while building, each fixed with a failing test first:**
+  - A filter or switch change could be undone by a Collector snapshot already in flight (`filter_change_beats_snapshot_in_flight`).
+  - Chip toggles sent the reactive proxy; the mock could not copy it and silently rolled back (caught by e2e `filter_chip_hides_and_persists`).
+  - **Watch clipboard broke copying in other apps:** reading the clipboard the instant it changed made multi-step copies (.NET/OLE apps, `Set-Clipboard`) fail. The watcher now waits 150 ms before reading (caught by the real-app clipboard smoke test, which failed 3 of 3 before and passes 3 of 3 after).
+- **Smoke server:** `scripts/range-server.mjs` now serves any `/<name>.bin` path (the same 64 MiB file).
+
 ## Plan 2 rulings (decisions made on the owner's behalf)
 Each line says what it costs if the decision is wrong.
 - **Contrast** (from the plan): `--ink-3` is `#6B6559` light and `#8F8B82` dark. Status words are `--ink-2`, with the colour on the icon. `DESIGN.md` is updated. The a11y test fails on the old colours. Cost: labels a little darker than the mockup.
-- **Pasted links queue directly** until plan 3 adds the Collector. Two or more links make a `Pasted list · d Mon HH:MM` package. Cost: no duplicate or online check yet.
+- **Pasted links queue directly**: replaced in plan 3; every link now goes through the Collector.
 - **TypeScript is pinned to 5.** npm picked 7.0, the native port, which svelte-check can't use yet. Cost: an upgrade later.
 - **Columns are narrower than the mockup's.** The mockup's minimum widths add up to 870px, but the list area is only 732px at the default window size, so Status was cut off. Below about 1180px the list scrolls sideways inside itself. Cost: a narrower name column.
 - **Sparkline:** the plan's formula contradicted its own test, so the test won: the peak sits 10% below the top. Cost: none.

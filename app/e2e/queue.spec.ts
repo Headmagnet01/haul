@@ -1,15 +1,8 @@
 import { expect, test, type Page } from '@playwright/test';
+import { addViaCollector, paste, startAllInCollector } from './helpers';
 
 const rows = (page: Page) => page.locator('[role="treegrid"] [role="row"][data-kind]');
 const row = (page: Page, text: string | RegExp) => rows(page).filter({ hasText: text });
-
-async function paste(page: Page, text: string) {
-  await page.evaluate((t) => {
-    const dt = new DataTransfer();
-    dt.setData('text/plain', t);
-    document.body.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
-  }, text);
-}
 
 test('empty_state_shown', async ({ page }) => {
   await page.goto('/');
@@ -19,12 +12,12 @@ test('empty_state_shown', async ({ page }) => {
 
 test('paste_adds_downloads', async ({ page }) => {
   await page.goto('/');
-  await paste(page, 'https://a.org/one.bin https://a.org/two.bin');
+  await addViaCollector(page, 'https://a.org/one.bin https://a.org/two.bin');
   const pkg = rows(page).filter({ hasText: 'Pasted list · ' });
   await expect(pkg).toHaveCount(1);
   await expect(pkg).toHaveAttribute('aria-level', '1');
   await expect(page.locator('[role="row"][aria-level="2"]')).toHaveCount(2);
-  await expect(page.getByRole('status')).toContainText('Added 2 downloads');
+  await expect(page.getByRole('status')).toContainText('Started 2 downloads');
 });
 
 test('paste_without_links_says_so', async ({ page }) => {
@@ -40,9 +33,10 @@ test('add_links_panel', async ({ page }) => {
   const box = page.getByRole('textbox', { name: 'Links to add' });
   await box.fill('https://a.org/panel.bin');
   await page.getByRole('button', { name: 'Add', exact: true }).click();
-  await expect(row(page, 'panel.bin')).toHaveCount(1);
-  await expect(page.getByRole('status')).toContainText('Added 1 download');
+  await expect(page.getByRole('status')).toContainText('Sent 1 link to the Collector');
   await expect(box).toBeHidden();
+  await startAllInCollector(page);
+  await expect(row(page, 'panel.bin')).toHaveCount(1);
 });
 
 test('rows_progress_live', async ({ page }) => {
@@ -97,7 +91,7 @@ test('collapse_package', async ({ page }) => {
 
 test('long_name_no_overflow', async ({ page }) => {
   await page.goto('/');
-  await paste(page, `https://a.org/${'a'.repeat(300)}.bin`);
+  await addViaCollector(page, `https://a.org/${'a'.repeat(300)}.bin`);
   await expect(rows(page)).toHaveCount(1);
   const fits = await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth);
   expect(fits).toBe(true);
