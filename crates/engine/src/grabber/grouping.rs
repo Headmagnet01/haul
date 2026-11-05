@@ -167,10 +167,11 @@ mod tests {
     use super::*;
     use ArchiveKind::*;
     const M: u32 = u32::MAX;
+    type Expected = Option<(&'static str, ArchiveKind, u32, bool)>;
 
     #[test]
     fn archive_part_table() {
-        let table: &[(&str, Option<(&str, ArchiveKind, u32, bool)>)] = &[
+        let table: &[(&str, Expected)] = &[
             ("movie.part1.rar", Some(("movie", Rar, 1, true))),
             ("movie.part01.rar", Some(("movie", Rar, 1, true))),
             ("movie.part002.rar", Some(("movie", Rar, 2, true))),
