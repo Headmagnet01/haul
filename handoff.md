@@ -1,6 +1,6 @@
 # Haul: handoff
 
-Last updated: 5 Nov 2026, end of plan 1 (engine core).
+Last updated: 5 Nov 2026. Plan 1 (engine core) is done, reviewed and merged. Plan 2 is written but not started.
 
 ## What Haul is
 A free, open-source Windows download manager. It pairs IDM's fast engine and browser capture with JDownloader 2's link collector, packages and auto-extraction, in a calm "dispatch board" interface.
@@ -16,7 +16,36 @@ A free, open-source Windows download manager. It pairs IDM's fast engine and bro
 | Done | Plan 1, the engine core: `docs/superpowers/plans/2026-11-05-haul-plan-1-engine-core.md`, Tasks 0–10. |
 | Tests | 87 tests, green 6 runs in a row after the review fixes. `cargo clippy -- -D warnings` is clean. |
 | Real-world check | 100 MB from `sin-speed.hetzner.com`: correct SHA-256, resumed after a hard kill, never overwrote an existing file. |
-| Next | Plan 2 (Tauri shell + Queue UI) is written: `docs/superpowers/plans/2026-11-05-haul-plan-2-shell-queue-ui.md`, from spec section 7 and milestone 3. Not started. |
+| Next | Execute plan 2 (Tauri shell + Queue UI): `docs/superpowers/plans/2026-11-05-haul-plan-2-shell-queue-ui.md`. Two owner answers come first; see "Plan 2: before you start". |
+
+## Plan 2: before you start
+**The plan:** 10 test-first tasks, from spec **section 7** (user interface) and milestone 3, plus `DESIGN.md` and the mockup.
+- The old note here said "sections 5–6"; that was wrong. Sections 5–6 are the Collector (plan 3) and the extension (plan 5).
+- Execution branches off `master`, e.g. `feat/shell-queue-ui`.
+
+**Waiting on the owner (ask before Task 2):**
+1. **Install approval.**
+   - Task 2 installs, all inside `app/` and the Cargo cache: npm packages (Tauri CLI and API, Svelte 5, Vite, TypeScript, Vitest, Playwright, axe-core, the IBM Plex fonts; a few hundred MB in `node_modules`) and the Tauri Rust crates.
+   - Playwright uses the installed Edge (`channel: 'msedge'`), so it downloads no browsers.
+2. **Execution method.**
+   - Native: the session builds every task, then one fresh whole-branch review. This was recommended, since the tasks share interfaces tightly.
+   - Subagent-driven: a fresh implementer and reviewer per task.
+   - Either way, the "write the code yourself, no worker delegation" agreement below still holds.
+
+**Toolchain already on this PC** (checked 5 Nov 2026):
+- Node 24.22, npm 11.2 and bun 1.4.
+- No global Tauri CLI; the plan uses `npx tauri` from the dev dependency.
+- WebView2 and Edge come with Windows 11.
+
+**Plan 2 rulings made while writing it** (full list at the end of the plan):
+- **AA contrast fix.**
+  - `--ink-3` becomes `#6B6559` light and `#8F8B82` dark; the old values are 2.8:1 and 3.3:1.
+  - Status words use `--ink-2`, with the colour on the icon, because orange or green text fails AA in light mode.
+  - Task 2 updates `DESIGN.md` to match.
+- **Pasted links queue directly** until plan 3 adds the Collector. Several links become one package named `Pasted list · <d Mon HH:MM>`.
+- **Working controls only:** no clipboard toggle (plan 3) and no "When done" or tray (plan 6). Closing the window quits cleanly.
+- **Speeds are per range:** the drawer's per-connection speeds are measured per range in the UI.
+- **Engine additions (Task 1):** `extract_links`, `Store::reorder` and `Queue::reorder`, `Store::list_packages`, and `Download.created_at`.
 
 ## How to build and test
 The toolchain is already installed on this PC:
@@ -84,10 +113,10 @@ Each line says what it costs if the decision is wrong.
 - **Formatting:** added `rustfmt.toml` (max width 120). Cost: none.
 
 ## Known minors, deferred
-- **`AllDone` fires too often:** it also fires when the user pauses every download, so plan 2 must check states before acting on "when done".
+- **`AllDone` fires too often:** it also fires when the user pauses every download, so plan 6 ("when done") must check states before acting on it.
 - **Stalls under a speed limit:** the stall rule (no bytes for `slow_window` → reconnect) is off while a speed limit is set, so a stall there still waits for the 30 s read timeout.
 - **Crash during finish:** a crash between the final rename and `set_completed` re-downloads the file as `name (1)`. Fix: store `target_path` before the rename and check it on recovery.
-- **Schedule vs. manual pause:** when a schedule window opens, it re-queues every download it auto-paused, even one the user has since decided to keep paused. This needs an owner decision.
+- **Schedule vs. manual pause:** when a schedule window opens, it re-queues every download it auto-paused, even one the user has since decided to keep paused. This needs an owner decision. It was raised with them and is still open; settle it with the schedule settings in plan 6.
 
 ## Post-review fixes (5 Nov 2026)
 `/code-review` (high) ran on the branch. Fixed, each with a test that failed first except the 429 race:
