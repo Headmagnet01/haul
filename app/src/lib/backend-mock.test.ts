@@ -1,31 +1,69 @@
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { createMockBackend } from './backend-mock';
+import type { Backend } from './backend';
 import type { Update } from './types';
 
 beforeEach(() => vi.useFakeTimers());
 afterEach(() => vi.useRealTimers());
 
-test('addLinks makes a package of two downloads', async () => {
-  const b = createMockBackend({ tickMs: 250, demo: false });
-  const r = await b.addLinks('https://a.org/f.bin https://a.org/404.bin');
-  expect(r.added).toBe(2);
-  expect(r.packageId).not.toBeNull();
+const CHECK_MS = 100;
+
+/** Like the app: links go to the Collector, are checked, then started. */
+async function queue(b: Backend, text: string) {
+  await b.addLinks(text, 'paste');
+  await vi.advanceTimersByTimeAsync(CHECK_MS);
+  const s = await b.collectorSnapshot();
+  await b.collectorStart(s.links.map((l) => l.id));
+}
+
+test('mock_collector_flow', async () => {
+  const b = createMockBackend({ tickMs: 250, demo: false, checkMs: CHECK_MS });
+  const got: Update[] = [];
+  b.onUpdate((u) => got.push(u));
+  const r = await b.addLinks('https://x.org/a.bin https://x.org/404.bin', 'paste');
+  expect(r).toEqual({ added: 2, skipped: 0 });
+  let c = await b.collectorSnapshot();
+  expect(c.links.map((l) => l.status)).toEqual(['checking', 'checking']);
+  expect(c.packages).toHaveLength(1);
+  expect(c.links.every((l) => l.packageKey === c.packages[0].key)).toBe(true);
+  await vi.advanceTimersByTimeAsync(CHECK_MS + 250);
+  expect(got.some((u) => u.collector)).toBe(true);
+  c = await b.collectorSnapshot();
+  expect(c.links.map((l) => [l.status, l.message])).toEqual([['online', null], ['offline', '404']]);
+  const online = c.links.find((l) => l.status === 'online')!;
+  expect(await b.collectorStart([online.id])).toEqual({ started: 1 });
+  expect((await b.snapshot()).downloads.map((d) => d.name)).toEqual(['a.bin']);
+  expect((await b.collectorSnapshot()).links).toHaveLength(1);
+  expect(await b.addLinks('https://x.org/404.bin', 'paste')).toEqual({ added: 0, skipped: 1 });
+  expect(await b.addLinks('no links', 'paste')).toEqual({ added: 0, skipped: 0 });
+  expect(b.calls).toContain('addLinks');
+});
+
+test('mock_groups_archive_parts', async () => {
+  const b = createMockBackend({ tickMs: 250, demo: false, checkMs: CHECK_MS });
+  await b.addLinks('https://x.org/m.7z.002 https://x.org/m.7z.001 https://x.org/lone.bin', 'paste');
+  const c = await b.collectorSnapshot();
+  expect(c.packages.map((p) => [p.name, p.archive])).toEqual([['m', '7z']]);
+  expect(c.links.map((l) => [l.name, l.packageKey !== null])).toEqual(
+    [['m.7z.001', true], ['m.7z.002', true], ['lone.bin', false]]);
+});
+
+test('starting a package makes a package of downloads', async () => {
+  const b = createMockBackend({ tickMs: 250, demo: false, checkMs: CHECK_MS });
+  await queue(b, 'https://a.org/f.bin https://a.org/g.bin');
   const s = await b.snapshot();
   expect(s.packages).toHaveLength(1);
-  expect(s.downloads.filter((d) => d.packageId === r.packageId)).toHaveLength(2);
-  expect(s.downloads.find((d) => d.url.includes('404'))!.state).toBe('offline');
-  expect(b.calls).toContain('addLinks');
-  expect((await b.addLinks('no links')).added).toBe(0);
+  expect(s.downloads.filter((d) => d.packageId === s.packages[0].id)).toHaveLength(2);
 });
 
 test('ticks emit progress, and pause shows up in the next update', async () => {
-  const b = createMockBackend({ tickMs: 250, demo: false });
+  const b = createMockBackend({ tickMs: 250, demo: false, checkMs: CHECK_MS });
   const got: Update[] = [];
   const off = b.onUpdate((u) => got.push(u));
-  await b.addLinks('https://a.org/big.bin');
+  await queue(b, 'https://a.org/big.bin');
   vi.advanceTimersByTime(250 * 30);
   expect(got.some((u) => u.progress.length >= 1)).toBe(true);
-  await b.addLinks('https://a.org/second.bin');
+  await queue(b, 'https://a.org/second.bin');
   vi.advanceTimersByTime(500);
   const second = (await b.snapshot()).downloads.find((d) => d.name === 'second.bin')!;
   expect(second.state).toBe('running');
@@ -38,8 +76,8 @@ test('ticks emit progress, and pause shows up in the next update', async () => {
 });
 
 test('a download finishes in about 6 s', async () => {
-  const b = createMockBackend({ tickMs: 250, demo: false });
-  await b.addLinks('https://a.org/x.bin');
+  const b = createMockBackend({ tickMs: 250, demo: false, checkMs: CHECK_MS });
+  await queue(b, 'https://a.org/x.bin');
   vi.advanceTimersByTime(4000);
   expect((await b.snapshot()).downloads[0].state).toBe('running');
   vi.advanceTimersByTime(6000);
@@ -54,4 +92,10 @@ test('demo seed', async () => {
   expect(s.downloads.some((d) => d.state === 'running' && d.name.endsWith('.iso'))).toBe(true);
   expect(s.downloads.some((d) => d.state === 'link_expired')).toBe(true);
   expect(s.downloads.some((d) => d.state === 'paused')).toBe(true);
+  const c = await b.collectorSnapshot();
+  expect(c.packages.map((p) => p.name)).toEqual(['caminandes-3-4k', 'Pasted list · 5 Nov 18:40', 'godot-4.4-stable']);
+  expect(c.links).toHaveLength(9);
+  expect(c.links.find((l) => l.name === 'mozilla-common-voice-en.tar.gz')!.duplicate).toBe('downloaded');
+  expect(c.links.find((l) => l.name === 'readme-old.pdf')!.status).toBe('offline');
+  expect(c.links.find((l) => l.name === 'caminandes-3-4k.7z.004')!.status).toBe('checking');
 });

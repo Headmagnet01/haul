@@ -6,7 +6,13 @@ import type { Update } from './types';
 /** Command names match app/src-tauri/src/commands.rs; argument names are camelCase. */
 export const tauriBackend: Backend = {
   snapshot: () => invoke('snapshot'),
-  addLinks: (text) => invoke('add_links', { text }),
+  addLinks: (text, source) => invoke('add_links', { text, source }),
+  collectorSnapshot: () => invoke('collector_snapshot'),
+  collectorStart: (ids) => invoke('collector_start', { ids }),
+  collectorRemove: (ids) => invoke('collector_remove', { ids }),
+  collectorRecheck: (ids) => invoke('collector_recheck', { ids }),
+  setCollectorFilters: (filters) => invoke('set_collector_filters', { filters }),
+  setWatchClipboard: (on) => invoke('set_watch_clipboard', { on }),
   pause: (ids) => invoke('pause', { ids }),
   resume: (ids) => invoke('resume', { ids }),
   remove: (ids) => invoke('remove', { ids }),

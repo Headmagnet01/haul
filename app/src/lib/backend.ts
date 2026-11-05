@@ -1,10 +1,19 @@
-import type { AddResult, PriorityName, Snapshot, SpeedLimit, Update } from './types';
+import type {
+  CollectorFilters, CollectorSnapshot, IntakeResult, PriorityName, Snapshot, Source, SpeedLimit, StartResult, Update,
+} from './types';
 import { createMockBackend } from './backend-mock';
 import { tauriBackend } from './backend-tauri';
 
 export interface Backend {
   snapshot(): Promise<Snapshot>;
-  addLinks(text: string): Promise<AddResult>;
+  /** Sends the links in `text` to the Collector. */
+  addLinks(text: string, source: Source): Promise<IntakeResult>;
+  collectorSnapshot(): Promise<CollectorSnapshot>;
+  collectorStart(ids: number[]): Promise<StartResult>;
+  collectorRemove(ids: number[]): Promise<void>;
+  collectorRecheck(ids: number[]): Promise<void>;
+  setCollectorFilters(f: CollectorFilters): Promise<void>;
+  setWatchClipboard(on: boolean): Promise<void>;
   pause(ids: number[]): Promise<void>;
   resume(ids: number[]): Promise<void>;
   remove(ids: number[]): Promise<void>;
