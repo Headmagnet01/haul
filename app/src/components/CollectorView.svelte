@@ -121,6 +121,8 @@
               : undefined}
             onstart={() => (it.kind === 'package' ? c.startPackage(it.pkg.key) : c.startLink(it.link.id))}
             onrecheck={(id) => c.recheck(id)}
+            onremove={() =>
+              c.removeWithUndo(it.kind === 'package' ? c.linksOf(it.pkg.key).map((l) => l.id) : [it.link.id])}
           />
         {/each}
         {#if c.items.length === 0}

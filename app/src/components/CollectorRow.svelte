@@ -15,6 +15,7 @@
     ontoggle,
     onstart,
     onrecheck,
+    onremove,
   }: {
     item: CItem;
     filters: CollectorFilters;
@@ -25,6 +26,7 @@
     ontoggle?: () => void;
     onstart: () => void;
     onrecheck?: (id: number) => void;
+    onremove: () => void;
   } = $props();
 
   const toneOf = (l: CollectedLink) =>
@@ -109,6 +111,13 @@
         {item.kind === 'package' ? 'Start package' : 'Start'}
       </button>
     {/if}
+    <button
+      type="button"
+      class="rm"
+      tabindex="-1"
+      aria-label="Remove {view.name}"
+      title="Remove (Delete)"
+      onclick={(e) => { e.stopPropagation(); onremove(); }}><Icon name="x" size={14} /></button>
   </span>
 </div>
 
@@ -145,5 +154,8 @@
   @keyframes pulse { 50% { opacity: 0.3; } }
   .again { font-size: 12px; color: var(--ink); text-decoration: underline; text-underline-offset: 2px; }
   .src { font: 500 11px var(--mono); color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .act { display: flex; justify-content: flex-end; align-items: center; gap: 6px; }
   .act .btn { padding: 4px 10px; font-size: 12.5px; }
+  .rm { display: grid; place-items: center; width: 24px; height: 24px; border-radius: 5px; color: var(--ink-3); flex: none; transition: background 0.15s, color 0.15s; }
+  .rm:hover { background: var(--line); color: var(--ink); }
 </style>

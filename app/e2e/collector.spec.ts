@@ -125,3 +125,19 @@ test('rail_badge_counts_links', async ({ page }) => {
   await page.goto('/?demo=1');
   await expect(page.getByRole('navigation', { name: 'Views' }).getByRole('button', { name: /Collector/ })).toContainText('9');
 });
+
+test('remove_button_removes_with_undo', async ({ page }) => {
+  await page.goto('/');
+  await openCollector(page);
+  await paste(page, 'https://x.org/a.bin https://x.org/b.bin https://x.org/lone-other.bin');
+  await expect(crow(page, 'b.bin')).toContainText('Online');
+  await crow(page, 'a.bin').getByRole('button', { name: 'Remove a.bin' }).click();
+  await expect(crow(page, 'a.bin')).toHaveCount(0);
+  await expect(toast(page)).toContainText('Removed a.bin');
+  await toast(page).getByRole('button', { name: 'Undo' }).click();
+  await expect(crow(page, 'a.bin')).toHaveCount(1);
+  const pkg = crows(page).filter({ hasText: 'Pasted list · ' });
+  await pkg.getByRole('button', { name: /^Remove Pasted list/ }).click();
+  await expect(crows(page)).toHaveCount(0);
+  await expect(toast(page)).toContainText('Removed 3 links');
+});
