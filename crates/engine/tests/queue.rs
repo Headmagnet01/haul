@@ -271,3 +271,45 @@ async fn set_max_parallel_clamps() {
     q.set_max_parallel(50);
     assert_eq!(q.max_parallel(), 20);
 }
+
+#[tokio::test]
+async fn reorder_changes_start_order() {
+    let srv = slow_server(2_000_000, 1_000_000).await;
+    let dir = tempfile::tempdir().unwrap();
+    let c = ctx_on(Store::open_in_memory().unwrap(), TransferConfig::for_tests());
+    let q = Queue::start(c.clone(), 1);
+    q.set_schedule(Some(haul_engine::Schedule {
+        start: chrono::NaiveTime::from_hms_opt(0, 0, 0).unwrap(),
+        stop: chrono::NaiveTime::from_hms_opt(0, 0, 0).unwrap(),
+        weekdays: vec![],
+    }));
+    let a = q.add(nd(&srv.url, dir.path(), Priority::Normal)).unwrap();
+    let b = q.add(nd(&srv.url, dir.path(), Priority::Normal)).unwrap();
+    q.reorder(&[b, a]);
+    q.set_schedule(None);
+    wait_state(&c.store, b, DownloadState::Running, 5).await;
+    assert_eq!(c.store.get_download(a).unwrap().state, DownloadState::Queued);
+    q.shutdown().await;
+}
+
+#[tokio::test]
+async fn removing_running_download_emits_removed() {
+    let srv = slow_server(5_000_000, 500_000).await;
+    let dir = tempfile::tempdir().unwrap();
+    let c = ctx_on(Store::open_in_memory().unwrap(), TransferConfig::for_tests());
+    let mut rx = c.events.subscribe();
+    let q = Queue::start(c.clone(), 3);
+    let a = q.add(nd(&srv.url, dir.path(), Priority::Normal)).unwrap();
+    wait_state(&c.store, a, DownloadState::Running, 5).await;
+    q.remove(a);
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        let ev = tokio::time::timeout_at(deadline, rx.recv()).await.expect("no Removed event").unwrap();
+        if let Event::Removed { id } = ev {
+            assert_eq!(id, a);
+            break;
+        }
+    }
+    assert!(c.store.get_download(a).is_err(), "row deleted before Removed is sent");
+    assert_eq!(part_files(dir.path()), 0);
+}

@@ -42,11 +42,21 @@ pub struct Download {
     pub file_name: Option<String>,
     pub target_path: Option<PathBuf>,
     pub error: Option<String>,
+    /// UTC, `YYYY-MM-DDTHH:MM:SSZ`.
+    pub created_at: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Package {
+    pub id: PackageId,
+    pub name: String,
+    pub source: String,
+    pub created_at: String,
 }
 
 const DOWNLOAD_COLS: &str = "id, package_id, url, headers_json, state, priority, position, connections, \
     speed_limit, target_dir, file_name, target_path, error, final_url, size, etag, last_modified, \
-    resumable, probe_file_name, content_type";
+    resumable, probe_file_name, content_type, created_at";
 
 fn row_to_download(r: &Row) -> rusqlite::Result<Download> {
     let final_url: Option<String> = r.get(13)?;
@@ -78,6 +88,7 @@ fn row_to_download(r: &Row) -> rusqlite::Result<Download> {
         file_name: r.get(10)?,
         target_path: r.get::<_, Option<String>>(11)?.map(PathBuf::from),
         error: r.get(12)?,
+        created_at: r.get(20)?,
     })
 }
 
@@ -123,6 +134,17 @@ impl Store {
         let c = self.lock();
         c.execute("INSERT INTO packages (name, source) VALUES (?1, ?2)", params![name, source])?;
         Ok(c.last_insert_rowid())
+    }
+
+    pub fn list_packages(&self) -> Result<Vec<Package>, EngineError> {
+        let c = self.lock();
+        let mut st = c.prepare("SELECT id, name, source, created_at FROM packages ORDER BY id")?;
+        let rows = st
+            .query_map([], |r| {
+                Ok(Package { id: r.get(0)?, name: r.get(1)?, source: r.get(2)?, created_at: r.get(3)? })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
     }
 
     pub fn insert_download(&self, d: &NewDownload) -> Result<DownloadId, EngineError> {
@@ -217,6 +239,27 @@ impl Store {
         Ok(())
     }
 
+    /// Puts `ids` first, in that order, at positions 1..=k; every other row follows in its
+    /// current (priority, position, id) order. Priorities are unchanged.
+    pub fn reorder(&self, ids: &[DownloadId]) -> Result<(), EngineError> {
+        let mut c = self.lock();
+        let tx = c.transaction()?;
+        let rest: Vec<DownloadId> = {
+            let mut st = tx.prepare("SELECT id FROM downloads ORDER BY priority, position, id")?;
+            st.query_map([], |r| r.get(0))?.collect::<Result<Vec<_>, _>>()?
+        };
+        {
+            let mut up = tx.prepare("UPDATE downloads SET position = ?2 WHERE id = ?1")?;
+            let mut pos = 0i64;
+            for id in ids.iter().chain(rest.iter().filter(|i| !ids.contains(i))) {
+                pos += 1;
+                up.execute(params![id, pos])?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
     /// Deletes the row; its segments go with it (foreign-key cascade).
     pub fn delete_download(&self, id: DownloadId) -> Result<(), EngineError> {
         self.lock().execute("DELETE FROM downloads WHERE id = ?1", [id])?;
@@ -252,6 +295,28 @@ impl Store {
             })?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(rows)
+    }
+
+    /// Every download's segments in one query, each list ordered by start.
+    pub fn load_all_segments(&self) -> Result<std::collections::HashMap<DownloadId, Vec<Range>>, EngineError> {
+        let c = self.lock();
+        let mut st = c.prepare("SELECT download_id, start, pos, \"end\" FROM segments ORDER BY download_id, start")?;
+        let mut out: std::collections::HashMap<DownloadId, Vec<Range>> = std::collections::HashMap::new();
+        let rows = st.query_map([], |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                Range {
+                    start: r.get::<_, i64>(1)? as u64,
+                    pos: r.get::<_, i64>(2)? as u64,
+                    end: r.get::<_, i64>(3)? as u64,
+                },
+            ))
+        })?;
+        for row in rows {
+            let (id, range) = row?;
+            out.entry(id).or_default().push(range);
+        }
+        Ok(out)
     }
 
     pub fn get_setting(&self, key: &str) -> Result<Option<serde_json::Value>, EngineError> {
@@ -409,6 +474,49 @@ mod tests {
         s.delete_download(id).unwrap();
         assert!(s.load_segments(id).unwrap().is_empty());
         assert!(s.get_download(id).is_err());
+    }
+
+    #[test]
+    fn reorder_renumbers() {
+        let s = Store::open_in_memory().unwrap();
+        let ids: Vec<_> = (0..4).map(|_| s.insert_download(&nd(Priority::Normal)).unwrap()).collect();
+        let (a, b, c, d) = (ids[0], ids[1], ids[2], ids[3]);
+        s.reorder(&[c, a]).unwrap();
+        let list = s.list_downloads().unwrap();
+        assert_eq!(list.iter().map(|x| x.id).collect::<Vec<_>>(), vec![c, a, b, d]);
+        assert_eq!(list.iter().map(|x| x.position).collect::<Vec<_>>(), vec![1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn packages_listed() {
+        let s = Store::open_in_memory().unwrap();
+        let id = s.create_package("p", "paste").unwrap();
+        let ps = s.list_packages().unwrap();
+        assert_eq!(ps.len(), 1);
+        assert_eq!(ps[0].id, id);
+        assert_eq!(ps[0].name, "p");
+        assert_eq!(ps[0].source, "paste");
+        assert!(ps[0].created_at.ends_with('Z'), "{}", ps[0].created_at);
+    }
+
+    #[test]
+    fn created_at_filled() {
+        let s = Store::open_in_memory().unwrap();
+        let id = s.insert_download(&nd(Priority::Normal)).unwrap();
+        assert_eq!(s.get_download(id).unwrap().created_at.len(), 20);
+    }
+
+    #[test]
+    fn all_segments_grouped_by_download() {
+        let s = Store::open_in_memory().unwrap();
+        let a = s.insert_download(&nd(Priority::Normal)).unwrap();
+        let b = s.insert_download(&nd(Priority::Normal)).unwrap();
+        s.save_segments(a, &[Range { start: 10, pos: 15, end: 20 }, Range { start: 0, pos: 5, end: 10 }]).unwrap();
+        s.save_segments(b, &[Range { start: 0, pos: 1, end: 2 }]).unwrap();
+        let all = s.load_all_segments().unwrap();
+        assert_eq!(all.len(), 2);
+        assert_eq!(all[&a], vec![Range { start: 0, pos: 5, end: 10 }, Range { start: 10, pos: 15, end: 20 }]);
+        assert_eq!(all[&b], vec![Range { start: 0, pos: 1, end: 2 }]);
     }
 
     #[test]

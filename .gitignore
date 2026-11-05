@@ -16,3 +16,6 @@ _tmp/
 .env
 .DS_Store
 Thumbs.db
+# Playwright
+app/test-results/
+app/playwright-report/

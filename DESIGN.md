@@ -26,7 +26,7 @@ A **calm dispatch board**. Packages are shipments; the app is the board tracking
 | `--raised` | `#FFFFFF` | `#22221E` | Inputs, buttons |
 | `--ink` | `#1C1B19` | `#ECE8DF` | Primary text |
 | `--ink-2` | `#5F5A51` | `#A7A296` | Secondary text |
-| `--ink-3` | `#8D877B` | `#77736A` | Labels, hints |
+| `--ink-3` | `#6B6559` | `#8F8B82` | Labels, hints (darkened from the mockup's `#8D877B`/`#77736A` for AA contrast) |
 | `--line` | `#DED8CB` | `#2D2C28` | Borders |
 | `--line-2` | `#E9E4D9` | `#262521` | Row dividers, hover |
 | `--track` | `#E6E1D5` | `#2C2B27` | Empty progress track |
@@ -39,6 +39,7 @@ A **calm dispatch board**. Packages are shipments; the app is the board tracking
 ### Colour rules
 - **One signal colour.** Orange means "something is moving". Green is reserved for "verified/complete". Red is for errors only.
 - **Never colour alone.** Every status pairs an icon and a word with its colour.
+- Status words are `--ink-2`; the icon carries the colour; only error words use `--err` (AA contrast).
 - **The primary button is ink on surface**, not orange, so orange stays meaningful.
 - **Theme:** follows Windows' light/dark setting by default, with a manual override in Settings.
 
