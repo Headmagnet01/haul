@@ -26,6 +26,8 @@ pub use grouping::ArchiveKind;
 /// Probes at most this many links at once across the whole Collector.
 pub const PROBE_SLOTS: usize = 8;
 const PROBE_TIMEOUT: Duration = Duration::from_secs(20);
+/// Package keys of archive sets start with this; other keys are `"<batch id>:rest"`.
+const ARCHIVE_KEY: &str = "a:";
 
 /// Checks one link. Injected so tests run without a network.
 pub type ProbeFn = Arc<dyn Fn(String) -> BoxFuture<'static, Result<ProbeInfo, EngineError>> + Send + Sync>;
@@ -221,37 +223,51 @@ impl Grabber {
         let queued: Vec<DupKey> = queued.into_iter().map(|(_, k)| k).collect();
         let dups = find_duplicates(&link_keys, &queued, &finished);
 
+        // Archive sets group across every waiting link: clipboard users copy parts one at a time.
+        let all_names: Vec<&str> = names.iter().map(String::as_str).collect();
+        let sets: Vec<grouping::Group> = group_names(&all_names).into_iter().filter(|g| g.archive.is_some()).collect();
+        let mut in_set = vec![false; links.len()];
+        sets.iter().flat_map(|g| &g.members).for_each(|&i| in_set[i] = true);
+        // Each set is shown where its earliest link arrived.
+        let anchor = |g: &grouping::Group| g.members.iter().map(|&i| links[i].batch_id).min().unwrap_or(0);
+
         let mut by_batch: HashMap<i64, Vec<usize>> = HashMap::new();
         for (i, l) in links.iter().enumerate() {
-            by_batch.entry(l.batch_id).or_default().push(i);
+            if !in_set[i] {
+                by_batch.entry(l.batch_id).or_default().push(i);
+            }
         }
         let mut out = CollectorState::default();
         for b in &batches {
-            let Some(idx) = by_batch.get(&b.id) else { continue };
-            let batch_names: Vec<&str> = idx.iter().map(|&i| names[i].as_str()).collect();
-            for g in group_names(&batch_names) {
-                let members: Vec<usize> = g.members.iter().map(|&m| idx[m]).collect();
-                let package_key = (g.archive.is_some() || members.len() >= 2).then(|| {
-                    let key = format!("{}:{}", b.id, g.key);
-                    let name = match &g.base {
-                        Some(base) => base.clone(),
-                        None => {
-                            let ns: Vec<&str> = members.iter().map(|&i| names[i].as_str()).collect();
-                            common_name_prefix(&ns).unwrap_or_else(|| b.label.clone())
-                        }
-                    };
-                    out.packages.push(CollectorPackage {
-                        key: key.clone(),
-                        name,
-                        archive: g.archive,
-                        source: b.source.clone(),
-                        created_at: b.created_at.clone(),
-                    });
-                    key
+            for g in sets.iter().filter(|g| anchor(g) == b.id) {
+                let key = format!("{ARCHIVE_KEY}{}", g.key);
+                out.packages.push(CollectorPackage {
+                    key: key.clone(),
+                    name: g.base.clone().unwrap_or_default(),
+                    archive: g.archive,
+                    source: b.source.clone(),
+                    created_at: b.created_at.clone(),
                 });
-                for i in members {
-                    out.links.push(collected(&links[i], &names[i], b, dups[i], package_key.clone()));
+                for &i in &g.members {
+                    let lb = batches.iter().find(|x| x.id == links[i].batch_id).unwrap_or(b);
+                    out.links.push(collected(&links[i], &names[i], lb, dups[i], Some(key.clone())));
                 }
+            }
+            let Some(rest) = by_batch.get(&b.id) else { continue };
+            let package_key = (rest.len() >= 2).then(|| {
+                let key = format!("{}:rest", b.id);
+                let ns: Vec<&str> = rest.iter().map(|&i| names[i].as_str()).collect();
+                out.packages.push(CollectorPackage {
+                    key: key.clone(),
+                    name: common_name_prefix(&ns).unwrap_or_else(|| b.label.clone()),
+                    archive: None,
+                    source: b.source.clone(),
+                    created_at: b.created_at.clone(),
+                });
+                key
+            });
+            for &i in rest {
+                out.links.push(collected(&links[i], &names[i], b, dups[i], package_key.clone()));
             }
         }
         Ok(out)
@@ -306,11 +322,19 @@ impl Grabber {
 
     /// The Queue package a collector package became, created on its first start.
     fn package_for(&self, key: &str, batch_id: i64, pkg: Option<&CollectorPackage>) -> Result<PackageId, EngineError> {
+        let (name, source) = pkg.map_or(("Pasted list", "paste"), |p| (p.name.as_str(), p.source.as_str()));
+        if let Some(set) = key.strip_prefix(ARCHIVE_KEY) {
+            if let Some(id) = self.store.archive_package(set)? {
+                return Ok(id);
+            }
+            let id = self.store.create_package(name, source)?;
+            self.store.set_archive_package(set, id)?;
+            return Ok(id);
+        }
         let group_key = key.split_once(':').map_or(key, |(_, g)| g);
         if let Some(id) = self.store.group_package(batch_id, group_key)? {
             return Ok(id);
         }
-        let (name, source) = pkg.map_or(("Pasted list", "paste"), |p| (p.name.as_str(), p.source.as_str()));
         let id = self.store.create_package(name, source)?;
         self.store.set_group_package(batch_id, group_key, id)?;
         Ok(id)

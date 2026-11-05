@@ -135,6 +135,28 @@ impl Store {
             .optional()?)
     }
 
+    /// The Queue package an archive set became, while that package still has downloads.
+    pub fn archive_package(&self, group_key: &str) -> Result<Option<PackageId>, EngineError> {
+        Ok(self
+            .lock()
+            .query_row(
+                "SELECT a.package_id FROM collector_archives a WHERE a.group_key = ?1 \
+                 AND EXISTS (SELECT 1 FROM downloads d WHERE d.package_id = a.package_id)",
+                params![group_key],
+                |r| r.get(0),
+            )
+            .optional()?)
+    }
+
+    pub fn set_archive_package(&self, group_key: &str, package_id: PackageId) -> Result<(), EngineError> {
+        self.lock().execute(
+            "INSERT INTO collector_archives (group_key, package_id) VALUES (?1, ?2) \
+             ON CONFLICT(group_key) DO UPDATE SET package_id = excluded.package_id",
+            params![group_key, package_id],
+        )?;
+        Ok(())
+    }
+
     pub fn set_group_package(&self, batch_id: i64, group_key: &str, package_id: PackageId) -> Result<(), EngineError> {
         self.lock().execute(
             "INSERT INTO collector_groups (batch_id, group_key, package_id) VALUES (?1, ?2, ?3) \
@@ -163,13 +185,13 @@ mod tests {
     }
 
     #[test]
-    fn schema_version_is_2() {
+    fn schema_version_is_3() {
         let s = Store::open_in_memory().unwrap();
-        assert_eq!(s.schema_version().unwrap(), 2);
+        assert_eq!(s.schema_version().unwrap(), 3);
     }
 
     #[test]
-    fn migrates_v1_to_v2() {
+    fn migrates_v1_to_latest() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("haul.db");
         {
@@ -194,11 +216,13 @@ mod tests {
         // Simulate a database that only ever saw migration 1 holding a download.
         {
             let c = rusqlite::Connection::open(&path).unwrap();
-            c.execute_batch("DROP TABLE collector_groups; DROP TABLE collector_links; DROP TABLE collector_batches; PRAGMA user_version = 1;")
+            c.execute_batch(
+                "DROP TABLE collector_archives; DROP TABLE collector_groups; DROP TABLE collector_links;                  DROP TABLE collector_batches; PRAGMA user_version = 1;",
+            )
                 .unwrap();
         }
         let s = Store::open(&path).unwrap();
-        assert_eq!(s.schema_version().unwrap(), 2);
+        assert_eq!(s.schema_version().unwrap(), 3);
         assert_eq!(s.list_downloads().unwrap()[0].id, id);
         s.create_batch("paste", "x").unwrap();
     }
@@ -255,6 +279,27 @@ mod tests {
         s.set_group_package(b, "rest", pkg).unwrap();
         assert_eq!(s.group_package(b, "rest").unwrap(), Some(pkg));
         assert_eq!(s.group_package(b, "7z:m").unwrap(), None);
+    }
+
+    #[test]
+    fn archive_package_needs_live_downloads() {
+        let s = Store::open_in_memory().unwrap();
+        let pkg = s.create_package("m", "paste").unwrap();
+        assert_eq!(s.archive_package("rar:m").unwrap(), None);
+        s.set_archive_package("rar:m", pkg).unwrap();
+        assert_eq!(s.archive_package("rar:m").unwrap(), None, "a package with no downloads is not reused");
+        s.insert_download(&NewDownload {
+            package_id: Some(pkg),
+            url: "https://a.org/m.part1.rar".into(),
+            headers_json: None,
+            target_dir: PathBuf::from(r"C:\dl"),
+            file_name: None,
+            priority: Priority::Normal,
+            connections: 8,
+            speed_limit: None,
+        })
+        .unwrap();
+        assert_eq!(s.archive_package("rar:m").unwrap(), Some(pkg));
     }
 
     #[test]

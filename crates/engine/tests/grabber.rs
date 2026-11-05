@@ -364,3 +364,37 @@ async fn concurrent_intakes_add_each_link_once() {
     assert_eq!(added, 300);
     assert_eq!(store.list_links().unwrap().len(), 300);
 }
+
+#[tokio::test]
+async fn archive_parts_from_separate_intakes_join() {
+    let (p, _) = fake(online, 0);
+    let (g, _) = grabber(p);
+    g.intake(links(&["https://a.org/movie.part1.rar"]), "clipboard").unwrap();
+    g.intake(links(&["https://a.org/other.bin"]), "clipboard").unwrap();
+    g.intake(links(&["https://b.org/Movie.part2.rar"]), "clipboard").unwrap();
+    let s = wait_until(&g, "online", |s| s.links.len() == 3 && all_online(s)).await;
+    assert_eq!(s.packages.len(), 1, "{s:?}");
+    assert_eq!(s.packages[0].name, "movie");
+    let names: Vec<&str> = s.links.iter().map(|l| l.name.as_str()).collect();
+    assert_eq!(names, vec!["movie.part1.rar", "Movie.part2.rar", "other.bin"]);
+    assert_eq!(s.links[1].package_key.as_ref(), Some(&s.packages[0].key));
+    assert_eq!(s.links[2].package_key, None);
+}
+
+#[tokio::test]
+async fn late_part_joins_started_package() {
+    let (p, _) = fake(online, 0);
+    let (g, store) = grabber(p);
+    let q = idle_queue(&store);
+    g.intake(links(&["https://a.org/m.part1.rar", "https://a.org/m.part2.rar"]), "paste").unwrap();
+    let s = wait_until(&g, "online", all_online).await;
+    let ids: Vec<i64> = s.links.iter().map(|l| l.id).collect();
+    assert_eq!(g.start(&ids, &q, &defaults()).unwrap(), 2);
+    g.intake(links(&["https://a.org/m.part3.rar"]), "clipboard").unwrap();
+    let s = wait_until(&g, "online", all_online).await;
+    assert_eq!(g.start(&[s.links[0].id], &q, &defaults()).unwrap(), 1);
+    let ds = store.list_downloads().unwrap();
+    assert_eq!(ds.len(), 3);
+    assert!(ds.iter().all(|d| d.package_id.is_some() && d.package_id == ds[0].package_id), "{ds:?}");
+    q.shutdown().await;
+}

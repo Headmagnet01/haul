@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 mod collector;
 pub use collector::{Batch, CollectorLink};
 
-const SCHEMA_VERSION: i64 = 2;
+const SCHEMA_VERSION: i64 = 3;
 
 #[derive(Clone)]
 pub struct Store {
@@ -116,7 +116,7 @@ impl Store {
         conn.pragma_update(None, "foreign_keys", "ON")?;
         conn.busy_timeout(std::time::Duration::from_secs(5))?;
         let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
-        let migrations = [include_str!("schema.sql"), include_str!("migration_2.sql")];
+        let migrations = [include_str!("schema.sql"), include_str!("migration_2.sql"), include_str!("migration_3.sql")];
         for (i, sql) in migrations.iter().enumerate().skip(version.max(0) as usize) {
             let to = i + 1;
             conn.execute_batch(&format!("BEGIN; {sql} PRAGMA user_version = {to}; COMMIT;"))?;
