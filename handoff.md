@@ -227,3 +227,7 @@ Details and rulings are in `.superpowers/sdd/2026-11-05-haul-plan-1-engine-core/
 ## Environment notes
 - **Bash heredocs:** they mangle quotes and backslashes on this machine. Write files with the Write tool, or put edit scripts in the scratchpad and run them with `python -I`.
 - **Mockup preview:** `.claude/launch.json` has a python `http.server` config on port 5178.
+- **Mock app preview:** `.claude/launch.json` also has `app-mock` (`npm --prefix app run dev:mock`, port 5174), for the browser pane.
+- **The PowerShell tool is sandboxed:** it sees a different `%APPDATA%` and can't reach the app's windows. Use Bash (or `powershell` called from Bash) for anything touching the real app data, clipboard or windows.
+- **An app started in the background from Bash can't be closed with window messages:** its window isn't visible to the tools, although DevTools on port 9222 works. Close it by hand, or use `taskkill` (crash-like, test data only).
+- **Plan 3's ledger** (every ruling, with its test evidence) is in `.superpowers/sdd/2026-11-05-haul-plan-3-collector-clipboard/progress.md` (git-ignored). Delete it after the merge.
