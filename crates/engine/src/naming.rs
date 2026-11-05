@@ -7,8 +7,8 @@ use std::path::{Path, PathBuf};
 const MAX_NAME_CHARS: usize = 200;
 const FALLBACK: &str = "download";
 const RESERVED: [&str; 22] = [
-    "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9", "LPT1",
-    "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+    "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9", "LPT1", "LPT2",
+    "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
 ];
 
 fn trim_end_dots_spaces(s: &str) -> &str {
@@ -17,10 +17,8 @@ fn trim_end_dots_spaces(s: &str) -> &str {
 
 /// Turns any string into a name Windows accepts, keeping the extension.
 pub fn sanitize_filename(raw: &str) -> String {
-    let replaced: String = raw
-        .chars()
-        .map(|c| if "<>:\"/\\|?*".contains(c) || c.is_control() { '_' } else { c })
-        .collect();
+    let replaced: String =
+        raw.chars().map(|c| if "<>:\"/\\|?*".contains(c) || c.is_control() { '_' } else { c }).collect();
     let mut name = trim_end_dots_spaces(replaced.trim_start()).to_string();
     if name.chars().all(|c| c == '.') {
         return FALLBACK.to_string();
@@ -151,10 +149,7 @@ mod tests {
 
     #[test]
     fn sanitize_replaces_illegal() {
-        assert_eq!(
-            sanitize_filename("a<b>:c\"d/e\\f|g?h*.txt"),
-            "a_b__c_d_e_f_g_h_.txt"
-        );
+        assert_eq!(sanitize_filename("a<b>:c\"d/e\\f|g?h*.txt"), "a_b__c_d_e_f_g_h_.txt");
         assert_eq!(sanitize_filename("tab\there\u{1}.txt"), "tab_here_.txt");
     }
 
@@ -196,10 +191,7 @@ mod tests {
     #[test]
     fn filename_quoted() {
         let u = Url::parse("https://x.org/ignored.bin").unwrap();
-        assert_eq!(
-            filename_from(Some("attachment; filename=\"my file.iso\""), &u),
-            "my file.iso"
-        );
+        assert_eq!(filename_from(Some("attachment; filename=\"my file.iso\""), &u), "my file.iso");
     }
 
     #[test]

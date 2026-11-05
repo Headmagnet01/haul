@@ -11,7 +11,7 @@ use reqwest::header::{self, HeaderMap};
 use reqwest::{Client, StatusCode};
 use std::collections::HashMap;
 use std::fs::File;
-use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering::Relaxed, Ordering::SeqCst};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use tokio_util::sync::CancellationToken;
@@ -53,6 +53,8 @@ pub(crate) struct Env {
     pub received: Arc<AtomicU64>,
     pub live: Arc<Mutex<HashMap<u64, Live>>>,
     pub next_live: AtomicU64,
+    /// Connections still running in this pass (set to the spawn count).
+    pub active: AtomicUsize,
 }
 
 enum FetchEnd {
@@ -94,6 +96,15 @@ pub(crate) fn io_error(e: std::io::Error) -> EngineError {
 
 /// The connection loop. Returns Ok when there is nothing left to take or the job was cancelled.
 pub(crate) async fn worker(env: Arc<Env>, conn: usize) -> Result<(), ConnExit> {
+    struct Active<'a>(&'a AtomicUsize, bool);
+    impl Drop for Active<'_> {
+        fn drop(&mut self) {
+            if !self.1 {
+                self.0.fetch_sub(1, SeqCst);
+            }
+        }
+    }
+    let mut active = Active(&env.active, false);
     loop {
         if env.cancel.is_cancelled() {
             return Ok(());
@@ -118,6 +129,16 @@ pub(crate) async fn worker(env: Arc<Env>, conn: usize) -> Result<(), ConnExit> {
             let progressed = env.table.lock().unwrap().slots[idx].range.pos > before;
             match res {
                 Ok(e) => break e,
+                Err(ConnExit::Fatal(EngineError::Http(429)))
+                    if env.active.try_update(SeqCst, SeqCst, |n| (n > 1).then(|| n - 1)).is_ok() =>
+                {
+                    // Too many connections for this host: drop this one; the others
+                    // pick up its range by stealing. The last connection never sheds.
+                    tracing::debug!(id = env.id, conn, "429: shedding a connection");
+                    active.1 = true;
+                    env.table.lock().unwrap().release(idx);
+                    return Ok(());
+                }
                 Err(ConnExit::Fatal(e)) if e.is_retryable() => {
                     if progressed {
                         attempts = 0;
@@ -197,10 +218,10 @@ async fn fetch(env: &Env, idx: usize) -> Result<FetchEnd, ConnExit> {
     let live_id = env.next_live.fetch_add(1, Relaxed);
     let kill = CancellationToken::new();
     let received = Arc::new(AtomicU64::new(0));
-    env.live.lock().unwrap().insert(
-        live_id,
-        Live { kill: kill.clone(), received: received.clone(), since: Instant::now() },
-    );
+    env.live
+        .lock()
+        .unwrap()
+        .insert(live_id, Live { kill: kill.clone(), received: received.clone(), since: Instant::now() });
     struct Unregister<'a>(&'a Env, u64);
     impl Drop for Unregister<'_> {
         fn drop(&mut self) {
@@ -220,9 +241,7 @@ async fn fetch(env: &Env, idx: usize) -> Result<FetchEnd, ConnExit> {
         }
         let data = std::mem::take(buf);
         let n = data.len() as u64;
-        let mut data = write_at(env.file.clone(), *pos, data)
-            .await
-            .map_err(|e| ConnExit::Fatal(io_error(e)))?;
+        let mut data = write_at(env.file.clone(), *pos, data).await.map_err(|e| ConnExit::Fatal(io_error(e)))?;
         *pos += n;
         {
             let mut t = env.table.lock().unwrap();

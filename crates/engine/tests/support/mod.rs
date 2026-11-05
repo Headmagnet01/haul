@@ -29,11 +29,7 @@ pub fn body(len: usize) -> Bytes {
 pub fn assert_file_eq(path: &Path, len: usize) {
     let got = std::fs::read(path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
     assert_eq!(got.len(), len, "length of {}", path.display());
-    assert!(
-        Sha256::digest(&got) == Sha256::digest(body(len)),
-        "content of {} differs",
-        path.display()
-    );
+    assert!(Sha256::digest(&got) == Sha256::digest(body(len)), "content of {} differs", path.display());
 }
 
 #[derive(Clone, Default, Debug)]
@@ -60,6 +56,8 @@ pub struct Spec {
     pub redirect_from: Option<String>,
     /// Answer every ranged GET with this status instead.
     pub range_status: Option<u16>,
+    /// GETs beyond this many open responses get 429 Too Many Requests.
+    pub max_open: Option<u32>,
 }
 
 impl Spec {
@@ -75,6 +73,8 @@ pub struct TestServer {
     pub bytes_sent: Arc<AtomicU64>,
     pub max_concurrent: Arc<AtomicU32>,
     pub spec: Arc<Mutex<Spec>>,
+    /// How many 429s were sent.
+    pub too_many: Arc<AtomicU32>,
 }
 
 struct Srv {
@@ -84,6 +84,7 @@ struct Srv {
     bytes_sent: Arc<AtomicU64>,
     in_flight: Arc<AtomicU32>,
     max_concurrent: Arc<AtomicU32>,
+    too_many: Arc<AtomicU32>,
     dropped_starts: Mutex<HashSet<u64>>,
 }
 
@@ -114,6 +115,7 @@ pub async fn serve(spec: Spec) -> TestServer {
         bytes_sent: Arc::new(AtomicU64::new(0)),
         in_flight: Arc::new(AtomicU32::new(0)),
         max_concurrent: Arc::new(AtomicU32::new(0)),
+        too_many: Arc::new(AtomicU32::new(0)),
         dropped_starts: Mutex::new(HashSet::new()),
     });
     let mut app = Router::new().route("/file", get(handle));
@@ -131,6 +133,7 @@ pub async fn serve(spec: Spec) -> TestServer {
         bytes_sent: srv.bytes_sent.clone(),
         max_concurrent: srv.max_concurrent.clone(),
         spec: srv.spec.clone(),
+        too_many: srv.too_many.clone(),
     }
 }
 
@@ -190,22 +193,20 @@ async fn handle(State(s): State<Arc<Srv>>, method: Method, headers: HeaderMap) -
     let len = spec.len as u64;
 
     let mut range = None;
-    if spec.ranges && !is_head {
-        if let Some(v) = headers.get(header::RANGE).and_then(|v| v.to_str().ok()) {
-            if let Some(code) = spec.range_status {
-                return StatusCode::from_u16(code).unwrap().into_response();
-            }
-            let ignore = spec.ignore_range_after_requests.is_some_and(|k| n > k);
-            if !ignore {
-                match parse_range(v, len) {
-                    Ok(r) => range = r,
-                    Err(()) => {
-                        return (
-                            StatusCode::RANGE_NOT_SATISFIABLE,
-                            [(header::CONTENT_RANGE, format!("bytes */{len}"))],
-                        )
-                            .into_response();
-                    }
+    if spec.ranges
+        && !is_head
+        && let Some(v) = headers.get(header::RANGE).and_then(|v| v.to_str().ok())
+    {
+        if let Some(code) = spec.range_status {
+            return StatusCode::from_u16(code).unwrap().into_response();
+        }
+        let ignore = spec.ignore_range_after_requests.is_some_and(|k| n > k);
+        if !ignore {
+            match parse_range(v, len) {
+                Ok(r) => range = r,
+                Err(()) => {
+                    return (StatusCode::RANGE_NOT_SATISFIABLE, [(header::CONTENT_RANGE, format!("bytes */{len}"))])
+                        .into_response();
                 }
             }
         }
@@ -239,6 +240,12 @@ async fn handle(State(s): State<Arc<Srv>>, method: Method, headers: HeaderMap) -
         return b.body(Body::empty()).unwrap();
     }
 
+    if let Some(max) = spec.max_open
+        && s.in_flight.load(SeqCst) >= max
+    {
+        s.too_many.fetch_add(1, SeqCst);
+        return StatusCode::TOO_MANY_REQUESTS.into_response();
+    }
     let bps = match spec.slow_from {
         Some((off, slow)) if start >= off => Some(slow),
         _ => spec.bytes_per_sec,

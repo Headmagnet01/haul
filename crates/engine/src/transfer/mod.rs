@@ -120,10 +120,10 @@ pub async fn run_transfer(job: TransferJob, ctx: &TransferCtx) -> TransferOutcom
         TransferOutcome::Paused => (DownloadState::Paused, None),
         TransferOutcome::Failed(e) => (state_for_error(e), Some(e.to_string())),
     };
-    if !matches!(out, TransferOutcome::Completed(_)) {
-        if let Err(e) = ctx.store.set_state(id, state, error.as_deref()) {
-            tracing::warn!(id, error = %e, "could not record final state");
-        }
+    if !matches!(out, TransferOutcome::Completed(_))
+        && let Err(e) = ctx.store.set_state(id, state, error.as_deref())
+    {
+        tracing::warn!(id, error = %e, "could not record final state");
     }
     ctx.events.send(Event::StateChanged { id, state, error });
     out
@@ -204,10 +204,7 @@ async fn transfer(job: &TransferJob, ctx: &TransferCtx) -> Result<Option<PathBuf
     let id = job.id;
     let d = ctx.store.get_download(id)?;
     let headers = parse_headers(d.headers_json.as_deref());
-    let host = url::Url::parse(&d.url)
-        .ok()
-        .and_then(|u| u.host_str().map(str::to_string))
-        .unwrap_or_default();
+    let host = url::Url::parse(&d.url).ok().and_then(|u| u.host_str().map(str::to_string)).unwrap_or_default();
 
     let mut old_probe = d.probe.clone();
     let mut file_name = d.file_name.as_deref().map(sanitize_filename);
@@ -254,18 +251,13 @@ async fn transfer(job: &TransferJob, ctx: &TransferCtx) -> Result<Option<PathBuf
             _ => vec![Range { start: 0, pos: 0, end: size.unwrap_or(u64::MAX) }],
         };
         let written: u64 = ranges.iter().map(|r| r.pos - r.start).sum();
-        if let Some(s) = size {
-            if s - written.min(s) > free_space(ctx, &d.target_dir)? {
-                return Err(EngineError::DiskFull);
-            }
+        if let Some(s) = size
+            && s - written.min(s) > free_space(ctx, &d.target_dir)?
+        {
+            return Err(EngineError::DiskFull);
         }
 
-        let file = std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(!resume)
-            .open(&part)?;
+        let file = std::fs::OpenOptions::new().read(true).write(true).create(true).truncate(!resume).open(&part)?;
         if let Some(s) = size {
             file.set_len(s).map_err(io_error)?;
         }
@@ -291,6 +283,7 @@ async fn transfer(job: &TransferJob, ctx: &TransferCtx) -> Result<Option<PathBuf
             received: Arc::new(AtomicU64::new(0)),
             live: Arc::new(Mutex::new(HashMap::new())),
             next_live: AtomicU64::new(0),
+            active: std::sync::atomic::AtomicUsize::new(conns),
         });
 
         let end = run_pass(ctx, &env, conns, size).await;

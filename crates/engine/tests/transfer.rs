@@ -321,11 +321,11 @@ async fn expired_mid_download() {
     let spec_handle = srv.spec.clone();
     tokio::spawn(async move {
         while let Ok(ev) = rx.recv().await {
-            if let Event::Progress { written, .. } = ev {
-                if written >= 5 * MIB {
-                    spec_handle.lock().unwrap().status = Some(403);
-                    break;
-                }
+            if let Event::Progress { written, .. } = ev
+                && written >= 5 * MIB
+            {
+                spec_handle.lock().unwrap().status = Some(403);
+                break;
             }
         }
     });
@@ -366,4 +366,40 @@ async fn range_not_satisfiable_fails_after_one_restart() {
     }
     // probe + first pass, then a fresh probe + second pass
     assert!(srv.requests.load(SeqCst) >= 4, "{} requests: no restart", srv.requests.load(SeqCst));
+}
+
+#[tokio::test]
+async fn too_many_requests_sheds_connections() {
+    // A host that allows 2 open responses: the other connections get 429.
+    let len = 32 * MIB as usize;
+    let mut spec = Spec::new(len);
+    spec.bytes_per_sec = Some(16_000_000);
+    spec.max_open = Some(2);
+    let srv = serve(spec).await;
+    let dir = tempfile::tempdir().unwrap();
+    let c = ctx(16, TransferConfig::for_tests());
+    let id = add(&c, &srv.url, dir.path(), 8, None);
+    let p = completed(run(&c, id).await);
+    assert_file_eq(&p, len);
+    assert!(srv.too_many.load(SeqCst) > 0, "the server never said 429");
+}
+
+#[tokio::test]
+async fn too_many_requests_single_connection_retries() {
+    // Even the only connection may get a 429; it backs off and retries.
+    let mut spec = Spec::new(1_000_000);
+    spec.max_open = Some(0);
+    let srv = serve(spec).await;
+    let spec_handle = srv.spec.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        spec_handle.lock().unwrap().max_open = None;
+    });
+    let dir = tempfile::tempdir().unwrap();
+    let mut cfg = TransferConfig::for_tests();
+    cfg.retry_delays = vec![Duration::from_millis(50); 6];
+    let c = ctx(16, cfg);
+    let id = add(&c, &srv.url, dir.path(), 1, None);
+    let p = completed(run(&c, id).await);
+    assert_file_eq(&p, 1_000_000);
 }

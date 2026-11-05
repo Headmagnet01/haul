@@ -22,11 +22,11 @@ pub enum EngineError {
 }
 
 impl EngineError {
-    /// Network hiccups and server errors (5xx) are worth retrying; nothing else is.
+    /// Network hiccups, server errors (5xx) and 429 Too Many Requests are worth retrying.
     pub fn is_retryable(&self) -> bool {
         match self {
             EngineError::Network(_) => true,
-            EngineError::Http(code) => (500..600).contains(code),
+            EngineError::Http(code) => *code == 429 || (500..600).contains(code),
             _ => false,
         }
     }

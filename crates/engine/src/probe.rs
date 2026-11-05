@@ -54,23 +54,18 @@ fn info_from(resp: &Response, size: Option<u64>, resumable: bool) -> ProbeInfo {
 pub async fn probe(client: &Client, url: &str, headers: &HeaderMap) -> Result<ProbeInfo, EngineError> {
     url::Url::parse(url).map_err(|e| EngineError::Network(format!("bad url: {e}")))?;
 
-    if let Ok(resp) = client.head(url).headers(headers.clone()).send().await {
-        if resp.status().is_success() {
-            let h = resp.headers();
-            let len = content_length(h).filter(|&l| l > 0);
-            let ranges = header_str(h, header::ACCEPT_RANGES).is_some_and(|v| v.to_ascii_lowercase().contains("bytes"));
-            if let (Some(len), true) = (len, ranges) {
-                return Ok(info_from(&resp, Some(len), true));
-            }
+    if let Ok(resp) = client.head(url).headers(headers.clone()).send().await
+        && resp.status().is_success()
+    {
+        let h = resp.headers();
+        let len = content_length(h).filter(|&l| l > 0);
+        let ranges = header_str(h, header::ACCEPT_RANGES).is_some_and(|v| v.to_ascii_lowercase().contains("bytes"));
+        if let (Some(len), true) = (len, ranges) {
+            return Ok(info_from(&resp, Some(len), true));
         }
     }
 
-    let resp = client
-        .get(url)
-        .headers(headers.clone())
-        .header(header::RANGE, "bytes=0-0")
-        .send()
-        .await?;
+    let resp = client.get(url).headers(headers.clone()).header(header::RANGE, "bytes=0-0").send().await?;
     let info = match resp.status() {
         StatusCode::PARTIAL_CONTENT => {
             let total = content_range_total(resp.headers());

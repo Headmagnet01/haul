@@ -104,10 +104,10 @@ async fn priority_goes_first() {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
     while started.len() < 3 {
         let ev = tokio::time::timeout_at(deadline, rx.recv()).await.expect("timed out").unwrap();
-        if let Event::StateChanged { id, state: DownloadState::Running, .. } = ev {
-            if !started.contains(&id) {
-                started.push(id);
-            }
+        if let Event::StateChanged { id, state: DownloadState::Running, .. } = ev
+            && !started.contains(&id)
+        {
+            started.push(id);
         }
     }
     assert_eq!(started, vec![a, cc, b]);

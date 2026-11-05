@@ -93,23 +93,13 @@ mod tests {
 
     #[test]
     fn plan_remainder_to_last() {
-        assert_eq!(
-            initial_plan(8 * MIB + 3, 2),
-            vec![r(0, 0, 4 * MIB), r(4 * MIB, 4 * MIB, 8 * MIB + 3)]
-        );
+        assert_eq!(initial_plan(8 * MIB + 3, 2), vec![r(0, 0, 4 * MIB), r(4 * MIB, 4 * MIB, 8 * MIB + 3)]);
     }
 
     #[test]
     fn steal_picks_largest() {
-        let ranges = [
-            r(0, 0, 3 * MIB),
-            r(10 * MIB, 10 * MIB, 19 * MIB),
-            r(30 * MIB, 30 * MIB, 35 * MIB),
-        ];
-        assert_eq!(
-            pick_steal(&ranges, MIN_STEAL),
-            Some((1, 10 * MIB + 9 * MIB / 2))
-        );
+        let ranges = [r(0, 0, 3 * MIB), r(10 * MIB, 10 * MIB, 19 * MIB), r(30 * MIB, 30 * MIB, 35 * MIB)];
+        assert_eq!(pick_steal(&ranges, MIN_STEAL), Some((1, 10 * MIB + 9 * MIB / 2)));
     }
 
     #[test]

@@ -52,11 +52,12 @@ async fn run_until(ctx: &TransferCtx, id: DownloadId, fraction: f64) -> Transfer
     let watcher_cancel = cancel.clone();
     let watcher = tokio::spawn(async move {
         while let Ok(ev) = rx.recv().await {
-            if let Event::Progress { id: pid, written, .. } = ev {
-                if pid == id && written as f64 >= fraction * LEN as f64 {
-                    watcher_cancel.cancel();
-                    break;
-                }
+            if let Event::Progress { id: pid, written, .. } = ev
+                && pid == id
+                && written as f64 >= fraction * LEN as f64
+            {
+                watcher_cancel.cancel();
+                break;
             }
         }
     });
@@ -153,9 +154,8 @@ fn crash_simulation() {
                 tokio::select! {
                     out = &mut job => panic!("finished before the crash: {out:?}"),
                     ev = rx.recv() => {
-                        if let Ok(Event::Progress { id: pid, written, .. }) = ev {
-                            if pid == id && written as f64 >= 0.4 * LEN as f64 { break; }
-                        }
+                        if let Ok(Event::Progress { id: pid, written, .. }) = ev
+                            && pid == id && written as f64 >= 0.4 * LEN as f64 { break; }
                     }
                 }
             }

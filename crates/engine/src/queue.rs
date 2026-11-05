@@ -94,10 +94,10 @@ impl Queue {
             r.cancel.cancel();
             return;
         }
-        if let Ok(d) = self.ctx().store.get_download(id) {
-            if d.state == DownloadState::Queued {
-                self.set_state(id, DownloadState::Paused, None);
-            }
+        if let Ok(d) = self.ctx().store.get_download(id)
+            && d.state == DownloadState::Queued
+        {
+            self.set_state(id, DownloadState::Paused, None);
         }
     }
 
@@ -106,11 +106,11 @@ impl Queue {
         if self.inner.running.lock().unwrap().contains_key(&id) {
             return;
         }
-        if let Ok(d) = self.ctx().store.get_download(id) {
-            if !matches!(d.state, DownloadState::Queued | DownloadState::Running | DownloadState::Completed) {
-                self.set_state(id, DownloadState::Queued, None);
-                self.inner.wake.notify_one();
-            }
+        if let Ok(d) = self.ctx().store.get_download(id)
+            && !matches!(d.state, DownloadState::Queued | DownloadState::Running | DownloadState::Completed)
+        {
+            self.set_state(id, DownloadState::Queued, None);
+            self.inner.wake.notify_one();
         }
     }
 
@@ -173,16 +173,15 @@ impl Queue {
 }
 
 fn delete_row_and_part(ctx: &TransferCtx, id: DownloadId) {
-    if let Ok(d) = ctx.store.get_download(id) {
-        if d.state != DownloadState::Completed {
-            if let Some(name) = &d.file_name {
-                let part = part_path(&d.target_dir, name, id);
-                if part.exists() {
-                    if let Err(e) = std::fs::remove_file(&part) {
-                        tracing::warn!(id, error = %e, "could not delete part file");
-                    }
-                }
-            }
+    if let Ok(d) = ctx.store.get_download(id)
+        && d.state != DownloadState::Completed
+        && let Some(name) = &d.file_name
+    {
+        let part = part_path(&d.target_dir, name, id);
+        if part.exists()
+            && let Err(e) = std::fs::remove_file(&part)
+        {
+            tracing::warn!(id, error = %e, "could not delete part file");
         }
     }
     let _ = ctx.store.delete_download(id);
@@ -193,12 +192,8 @@ fn dispatch(inner: &Arc<Inner>) {
     if inner.stop.is_cancelled() {
         return;
     }
-    let allowed = inner
-        .schedule
-        .lock()
-        .unwrap()
-        .as_ref()
-        .is_none_or(|s| is_within_window(chrono::Local::now().naive_local(), s));
+    let allowed =
+        inner.schedule.lock().unwrap().as_ref().is_none_or(|s| is_within_window(chrono::Local::now().naive_local(), s));
     if !allowed {
         let running = inner.running.lock().unwrap();
         let mut auto = inner.auto_paused.lock().unwrap();

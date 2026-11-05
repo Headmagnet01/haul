@@ -186,10 +186,8 @@ impl Store {
     }
 
     pub fn set_state(&self, id: DownloadId, s: DownloadState, error: Option<&str>) -> Result<(), EngineError> {
-        self.lock().execute(
-            "UPDATE downloads SET state = ?2, error = ?3 WHERE id = ?1",
-            params![id, s.as_str(), error],
-        )?;
+        self.lock()
+            .execute("UPDATE downloads SET state = ?2, error = ?3 WHERE id = ?1", params![id, s.as_str(), error])?;
         Ok(())
     }
 
@@ -221,7 +219,8 @@ impl Store {
         let tx = c.transaction()?;
         tx.execute("DELETE FROM segments WHERE download_id = ?1", [id])?;
         {
-            let mut st = tx.prepare("INSERT INTO segments (download_id, start, pos, \"end\") VALUES (?1, ?2, ?3, ?4)")?;
+            let mut st =
+                tx.prepare("INSERT INTO segments (download_id, start, pos, \"end\") VALUES (?1, ?2, ?3, ?4)")?;
             for r in ranges {
                 st.execute(params![id, r.start as i64, r.pos as i64, r.end as i64])?;
             }
@@ -246,10 +245,8 @@ impl Store {
     }
 
     pub fn get_setting(&self, key: &str) -> Result<Option<serde_json::Value>, EngineError> {
-        let v: Option<String> = self
-            .lock()
-            .query_row("SELECT value FROM settings WHERE key = ?1", [key], |r| r.get(0))
-            .optional()?;
+        let v: Option<String> =
+            self.lock().query_row("SELECT value FROM settings WHERE key = ?1", [key], |r| r.get(0)).optional()?;
         Ok(v.and_then(|s| serde_json::from_str(&s).ok()))
     }
 

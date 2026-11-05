@@ -48,9 +48,7 @@ async fn probe_redirect() {
     let mut spec = Spec::new(10);
     spec.redirect_from = Some("/old".into());
     let srv = serve(spec).await;
-    let p = probe(&http_client(), &format!("{}/old", srv.base), &HeaderMap::new())
-        .await
-        .unwrap();
+    let p = probe(&http_client(), &format!("{}/old", srv.base), &HeaderMap::new()).await.unwrap();
     assert!(p.final_url.ends_with("/file"), "{}", p.final_url);
 }
 
