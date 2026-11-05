@@ -1,4 +1,4 @@
-import type { DownloadView, PackageView, Snapshot, Update } from './types';
+import type { DownloadView, PackageView, PriorityName, Snapshot, Update } from './types';
 
 export type ListItem =
   | { kind: 'package'; pkg: PackageView; children: DownloadView[]; open: boolean }
@@ -95,4 +95,107 @@ export function moveIds(order: number[], id: number, delta: -1 | 1): number[] {
   const out = [...order];
   [out[i], out[j]] = [out[j], out[i]];
   return out;
+}
+
+export type Sel = { kind: 'file' | 'package'; id: number };
+export interface MovePlan {
+  /** Every download id in its new queue order. */
+  order: number[];
+  moved: number[];
+  /** The priority the moved rows take from their new neighbour. */
+  priority: PriorityName;
+}
+
+interface Block {
+  pkg: number | null;
+  ids: number[];
+}
+
+/** Queue order as blocks: a loose file, or a whole package placed at its first child. */
+function blocksOf(ds: DownloadView[]): Block[] {
+  const out: Block[] = [];
+  const byPkg = new Map<number, Block>();
+  for (const d of ds) {
+    if (d.packageId === null) {
+      out.push({ pkg: null, ids: [d.id] });
+      continue;
+    }
+    let b = byPkg.get(d.packageId);
+    if (!b) {
+      b = { pkg: d.packageId, ids: [] };
+      byPkg.set(d.packageId, b);
+      out.push(b);
+    }
+    b.ids.push(d.id);
+  }
+  return out;
+}
+
+function locate(blocks: Block[], ds: DownloadView[], sel: Sel): { bi: number; child: number } | null {
+  if (sel.kind === 'package') {
+    const bi = blocks.findIndex((b) => b.pkg === sel.id);
+    return bi < 0 ? null : { bi, child: -1 };
+  }
+  const d = ds.find((x) => x.id === sel.id);
+  if (!d) return null;
+  const bi = blocks.findIndex((b) => b.ids.includes(sel.id));
+  if (bi < 0) return null;
+  return { bi, child: d.packageId === null ? -1 : blocks[bi].ids.indexOf(sel.id) };
+}
+
+function plan(ds: DownloadView[], blocks: Block[], moved: number[], neighbour: number): MovePlan {
+  const prio = ds.find((d) => d.id === neighbour)?.priority ?? 'normal';
+  return { order: blocks.flatMap((b) => b.ids), moved, priority: prio };
+}
+
+/** Alt+Up/Down: a file or package moves one place; a file inside a package moves among its siblings. */
+export function planMove(ds: DownloadView[], sel: Sel, delta: -1 | 1): MovePlan | null {
+  const blocks = blocksOf(ds);
+  const at = locate(blocks, ds, sel);
+  if (!at) return null;
+  if (at.child >= 0) {
+    const ids = blocks[at.bi].ids;
+    const j = at.child + delta;
+    if (j < 0 || j >= ids.length) return null;
+    const neighbour = ids[j];
+    [ids[at.child], ids[j]] = [ids[j], ids[at.child]];
+    return plan(ds, blocks, [sel.id], neighbour);
+  }
+  const j = at.bi + delta;
+  if (j < 0 || j >= blocks.length) return null;
+  const neighbour = blocks[j].ids[0];
+  const moved = [...blocks[at.bi].ids];
+  [blocks[at.bi], blocks[j]] = [blocks[j], blocks[at.bi]];
+  return plan(ds, blocks, moved, neighbour);
+}
+
+/** Drag and drop: the dragged file or package takes the target's place (after it when moving down, before it when moving up). */
+export function planDrop(ds: DownloadView[], dragged: Sel, target: Sel): MovePlan | null {
+  const blocks = blocksOf(ds);
+  const from = locate(blocks, ds, dragged);
+  const to = locate(blocks, ds, target);
+  if (!from || !to) return null;
+  if (from.child >= 0 && to.child >= 0 && from.bi === to.bi) {
+    if (from.child === to.child) return null;
+    const ids = blocks[from.bi].ids;
+    const neighbour = ids[to.child];
+    const down = from.child < to.child;
+    ids.splice(from.child, 1);
+    ids.splice(ids.indexOf(neighbour) + (down ? 1 : 0), 0, dragged.id);
+    return plan(ds, blocks, [dragged.id], neighbour);
+  }
+  if (from.bi === to.bi) return null;
+  const neighbour = blocks[to.bi].ids[0];
+  const down = from.bi < to.bi;
+  let moving: Block;
+  if (from.child >= 0) {
+    // A file dragged out of its package keeps its package; only its place in the queue changes.
+    blocks[from.bi].ids.splice(from.child, 1);
+    moving = { pkg: null, ids: [dragged.id] };
+  } else {
+    moving = blocks.splice(from.bi, 1)[0];
+  }
+  const ti = blocks.findIndex((b) => b.ids.includes(neighbour));
+  blocks.splice(ti + (down ? 1 : 0), 0, moving);
+  return plan(ds, blocks, moving.ids, neighbour);
 }

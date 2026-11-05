@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { applyUpdate, buildList, moveIds, summary } from './model';
+import { applyUpdate, buildList, moveIds, planDrop, planMove, summary } from './model';
 import type { DownloadView, Snapshot, Update } from './types';
 
 function dl(id: number, name: string, packageId: number | null = null, extra: Partial<DownloadView> = {}): DownloadView {
@@ -87,4 +87,31 @@ test('moveIds', () => {
   expect(moveIds([1, 2, 3], 1, -1)).toEqual([1, 2, 3]);
   expect(moveIds([1, 2, 3], 1, 1)).toEqual([2, 1, 3]);
   expect(moveIds([1, 2, 3], 3, 1)).toEqual([1, 2, 3]);
+});
+
+describe('planMove / planDrop', () => {
+  // queue order: 1 (loose), [2, 4] package 7, 3 (loose), 5 low priority
+  const ds = () => [
+    dl(1, 'a'), dl(2, 'p1', 7), dl(3, 'b'), dl(4, 'p2', 7), dl(5, 'c', null, { priority: 'low' }),
+  ];
+  test('a loose file swaps with the neighbouring block', () => {
+    expect(planMove(ds(), { kind: 'file', id: 3 }, -1)).toEqual({ order: [1, 3, 2, 4, 5], moved: [3], priority: 'normal' });
+    expect(planMove(ds(), { kind: 'file', id: 1 }, -1)).toBeNull();
+  });
+  test('a package moves as a block', () => {
+    expect(planMove(ds(), { kind: 'package', id: 7 }, -1)).toEqual({ order: [2, 4, 1, 3, 5], moved: [2, 4], priority: 'normal' });
+  });
+  test('a child moves among its siblings', () => {
+    expect(planMove(ds(), { kind: 'file', id: 4 }, -1)).toEqual({ order: [1, 4, 2, 3, 5], moved: [4], priority: 'normal' });
+    expect(planMove(ds(), { kind: 'file', id: 4 }, 1)).toBeNull();
+  });
+  test('moving across a priority boundary takes the neighbour priority', () => {
+    expect(planMove(ds(), { kind: 'file', id: 3 }, 1)).toEqual({ order: [1, 2, 4, 5, 3], moved: [3], priority: 'low' });
+  });
+  test('drop inserts before the target block and takes its priority', () => {
+    expect(planDrop(ds(), { kind: 'file', id: 5 }, { kind: 'file', id: 1 })).toEqual({ order: [5, 1, 2, 4, 3], moved: [5], priority: 'normal' });
+    expect(planDrop(ds(), { kind: 'file', id: 1 }, { kind: 'file', id: 4 })).toEqual({ order: [2, 4, 1, 3, 5], moved: [1], priority: 'normal' });
+    expect(planDrop(ds(), { kind: 'file', id: 4 }, { kind: 'file', id: 2 })).toEqual({ order: [1, 4, 2, 3, 5], moved: [4], priority: 'normal' });
+    expect(planDrop(ds(), { kind: 'package', id: 7 }, { kind: 'file', id: 2 })).toBeNull();
+  });
 });

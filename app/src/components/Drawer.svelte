@@ -123,6 +123,7 @@
       </button>
       <button type="button" class="btn" onclick={() => app.backend.openFolder(d.id)}>Open folder</button>
       <button type="button" class="btn" onclick={() => copyLink(d.url)}>Copy link</button>
+      <button type="button" class="btn" onclick={() => app.removeWithUndo([d.id])}>Remove<kbd>Del</kbd></button>
     </div>
   {:else if pkg}
     <div class="dh">
@@ -139,6 +140,7 @@
       {:else}
         <button type="button" class="btn" onclick={() => app.toggleIds(kids)}>Resume all</button>
       {/if}
+      <button type="button" class="btn" onclick={() => app.removeWithUndo(kids.map((k) => k.id))}>Remove<kbd>Del</kbd></button>
     </div>
   {:else}
     <p class="hint">Select a download to see its connections.</p>

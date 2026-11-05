@@ -2,7 +2,7 @@
   import Icon from './Icon.svelte';
   import Strip from './Strip.svelte';
   import StatusCell from './StatusCell.svelte';
-  import type { ListItem } from '../lib/model';
+  import type { ListItem, Sel } from '../lib/model';
   import type { Status } from '../lib/status';
   import { statusOf } from '../lib/status';
   import { packageCells, stripCells, stripKind } from '../lib/strip';
@@ -15,6 +15,7 @@
     focusable,
     onselect,
     ontogglepkg,
+    ondropped,
   }: {
     item: ListItem;
     speeds: Map<number, number>;
@@ -22,7 +23,12 @@
     focusable: boolean;
     onselect: () => void;
     ontogglepkg?: () => void;
+    ondropped?: (dragged: Sel) => void;
   } = $props();
+
+  const ROW_TYPE = 'application/x-haul-row';
+  let over = $state(false);
+  const me = $derived<Sel>(item.kind === 'package' ? { kind: 'package', id: item.pkg.id } : { kind: 'file', id: item.d.id });
 
   function pkgStatus(ch: { state: string }[]): Status {
     const done = ch.filter((c) => c.state === 'completed').length;
@@ -85,7 +91,27 @@
   aria-expanded={item.kind === 'package' ? item.open : undefined}
   aria-selected={selected}
   tabindex={focusable ? 0 : -1}
+  draggable="true"
+  class:over
   onclick={onselect}
+  ondragstart={(e) => {
+    e.dataTransfer?.setData(ROW_TYPE, JSON.stringify(me));
+    if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move';
+  }}
+  ondragover={(e) => {
+    if (e.dataTransfer?.types.includes(ROW_TYPE)) {
+      e.preventDefault();
+      over = true;
+    }
+  }}
+  ondragleave={() => (over = false)}
+  ondrop={(e) => {
+    over = false;
+    const raw = e.dataTransfer?.getData(ROW_TYPE);
+    if (!raw) return;
+    e.preventDefault();
+    ondropped?.(JSON.parse(raw) as Sel);
+  }}
 >
   <div class="name" role="gridcell">
     {#if item.kind === 'package'}
@@ -121,6 +147,7 @@
   }
   .row:hover { background: var(--line-2); }
   .row.sel { background: var(--sel); }
+  .row.over { box-shadow: inset 0 2px 0 var(--ink-3); }
   .row:focus-visible { outline-offset: -2px; border-radius: 0; }
   .row.pkg { min-height: 44px; font-weight: 500; }
   .row.child .name { padding-left: 26px; }

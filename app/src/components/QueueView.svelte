@@ -82,6 +82,26 @@
         }
         break;
       }
+      case 'remove': {
+        const it = list[selIndex];
+        if (!it) return;
+        const next = list[selIndex + 1] ?? list[selIndex - 1];
+        app.removeSelected();
+        if (next && next !== it) {
+          // Select the row that takes this one's place, unless it was removed with it (a package's child).
+          const gone = (x: ListItem) => x.kind === 'file' && app.hidden.has(x.d.id);
+          const after = app.list.find((x) => keyOf(x) === keyOf(next) && !gone(x));
+          if (after) selectItem(after);
+          else app.select(null);
+        } else app.select(null);
+        void focusSelected();
+        break;
+      }
+      case 'move-up':
+      case 'move-down':
+        if (selIndex < 0) return;
+        void app.move(action === 'move-up' ? -1 : 1).then(focusSelected);
+        break;
       default:
         if (!onaction?.(action)) return;
     }
@@ -172,6 +192,8 @@
             selected={isSel(it)}
             focusable={selIndex < 0 ? i === 0 : selIndex === i}
             onselect={() => selectItem(it)}
+            ondropped={(dragged) =>
+              app.drop(dragged, it.kind === 'package' ? { kind: 'package', id: it.pkg.id } : { kind: 'file', id: it.d.id })}
             ontogglepkg={it.kind === 'package' ? () => app.setCollapsed(it.pkg.id, it.open) : undefined}
           />
         {/each}

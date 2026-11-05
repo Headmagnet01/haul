@@ -1,6 +1,6 @@
 import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 import type { Backend } from './backend';
-import { applyUpdate, buildList, summary, type ListItem } from './model';
+import { applyUpdate, buildList, planDrop, planMove, summary, type ListItem, type MovePlan, type Sel } from './model';
 import { RangeSpeeds } from './speeds';
 import type { AddResult, DownloadView, Snapshot, SpeedLimit, Update } from './types';
 
@@ -84,6 +84,51 @@ export function createAppState(backend: Backend) {
     return snapshot.downloads.filter((d) => d.packageId === pkgId && !hidden.has(d.id));
   }
 
+  // Remove waits 6 s so it can be undone; only then does the backend delete anything.
+  const UNDO_MS = 6000;
+  let pendingRemoval: { ids: number[]; timer: ReturnType<typeof setTimeout> } | null = null;
+
+  async function commitRemoval() {
+    const p = pendingRemoval;
+    if (!p) return;
+    pendingRemoval = null;
+    clearTimeout(p.timer);
+    await backend.remove(p.ids);
+    await load();
+    p.ids.forEach((id) => hidden.delete(id));
+  }
+
+  function undo() {
+    const p = pendingRemoval;
+    if (!p) return;
+    pendingRemoval = null;
+    clearTimeout(p.timer);
+    p.ids.forEach((id) => hidden.delete(id));
+  }
+
+  function removeWithUndo(ids: number[]) {
+    if (!ids.length) return;
+    if (pendingRemoval) void commitRemoval();
+    ids.forEach((id) => hidden.add(id));
+    const timer = setTimeout(() => void commitRemoval(), UNDO_MS);
+    pendingRemoval = { ids, timer };
+    const name = ids.length === 1 ? (byId.get(ids[0])?.name ?? '1 download') : `${ids.length} downloads`;
+    showToast(`Removed ${name}`, { label: 'Undo', run: undo }, UNDO_MS);
+  }
+
+  async function applyPlan(p: MovePlan | null) {
+    if (!p) return;
+    for (const id of p.moved) {
+      const d = byId.get(id);
+      if (d && d.priority !== p.priority) await backend.setPriority(id, p.priority);
+    }
+    await backend.reorder(p.order);
+    await load();
+  }
+
+  const currentSel = (): Sel | null =>
+    selectedPkg !== null ? { kind: 'package', id: selectedPkg } : selected !== null ? { kind: 'file', id: selected } : null;
+
   /** Pauses what's moving, otherwise resumes. A package acts on all its files. */
   async function toggleIds(ds: DownloadView[]) {
     const moving = ds.filter((d) => d.state === 'running' || d.state === 'queued');
@@ -145,6 +190,21 @@ export function createAppState(backend: Backend) {
       }
     },
     toggleIds,
+    removeWithUndo,
+    undo,
+    /** Delete on the selection: a package removes all its files. */
+    removeSelected() {
+      if (selectedPkg !== null) removeWithUndo(childrenOf(selectedPkg).map((d) => d.id));
+      else if (selected !== null) removeWithUndo([selected]);
+    },
+    /** Alt+Up/Down on the selection. */
+    async move(delta: -1 | 1) {
+      const sel = currentSel();
+      if (sel) await applyPlan(planMove(snapshot.downloads, sel, delta));
+    },
+    async drop(dragged: Sel, target: Sel) {
+      await applyPlan(planDrop(snapshot.downloads, dragged, target));
+    },
     setCollapsed(pkgId: number, closed: boolean) {
       if (closed) collapsed.add(pkgId);
       else collapsed.delete(pkgId);
