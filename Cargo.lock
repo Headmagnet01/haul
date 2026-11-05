@@ -1371,11 +1371,15 @@ dependencies = [
 name = "haul-app"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "haul-engine",
  "serde",
  "serde_json",
  "tauri",
  "tauri-build",
+ "tempfile",
+ "tokio",
+ "url",
 ]
 
 [[package]]
