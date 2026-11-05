@@ -4,7 +4,7 @@ use crate::core::AppCore;
 use clipboard_master::{CallbackResult, ClipboardHandler, Master};
 use haul_engine::extract_links;
 use std::hash::{DefaultHasher, Hash, Hasher};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// Larger clipboard text is ignored: it is a copied log or document, not a list of links.
 pub const MAX_CLIPBOARD_BYTES: usize = 1_000_000;
@@ -23,24 +23,35 @@ fn digest(text: &str) -> u64 {
 /// Decides which clipboard texts become Collector intake.
 #[derive(Default)]
 pub struct ClipboardFilter {
-    last_seen: Option<u64>,
+    /// The last text seen and when; the same text again soon after is one copy, not two.
+    last_seen: Option<(u64, Instant)>,
     own: Option<u64>,
 }
+
+/// Windows often reports one copy as several changes; the same text within this window is ignored.
+const REPEAT_WINDOW: Duration = Duration::from_secs(2);
 
 impl ClipboardFilter {
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// The text to send to the Collector, or `None` if it is too big, repeats the last text seen,
-    /// was written by Haul itself, or holds no links.
+    /// The text to send to the Collector, or `None` if it is too big, repeats the last text within
+    /// a moment, was written by Haul itself, or holds no links.
     pub fn accept(&mut self, text: &str) -> Option<String> {
+        self.accept_at(text, Instant::now())
+    }
+
+    pub fn accept_at(&mut self, text: &str, now: Instant) -> Option<String> {
         if text.len() > MAX_CLIPBOARD_BYTES {
             self.last_seen = None;
             return None;
         }
         let d = digest(text);
-        let repeat = self.last_seen.replace(d) == Some(d);
+        let repeat = self
+            .last_seen
+            .replace((d, now))
+            .is_some_and(|(prev, at)| prev == d && now.saturating_duration_since(at) < REPEAT_WINDOW);
         if repeat || self.own == Some(d) || extract_links(text).is_empty() {
             return None;
         }
@@ -126,6 +137,15 @@ mod tests {
         let mut f = ClipboardFilter::new();
         assert_eq!(f.accept("see https://a.org/x").as_deref(), Some("see https://a.org/x"));
         assert_eq!(f.accept("see https://a.org/x"), None);
+    }
+
+    #[test]
+    fn filter_accepts_same_text_again_later() {
+        let mut f = ClipboardFilter::new();
+        let t0 = std::time::Instant::now();
+        assert!(f.accept_at("https://a.org/x", t0).is_some());
+        assert!(f.accept_at("https://a.org/x", t0 + Duration::from_millis(500)).is_none(), "duplicate change event");
+        assert!(f.accept_at("https://a.org/x", t0 + Duration::from_secs(5)).is_some(), "copied again later");
     }
 
     #[test]
