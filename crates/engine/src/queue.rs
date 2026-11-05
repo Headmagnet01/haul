@@ -2,10 +2,11 @@
 
 use crate::error::EngineError;
 use crate::naming::part_path;
+use crate::schedule::{Schedule, is_within_window};
 use crate::store::NewDownload;
 use crate::transfer::{TransferCtx, TransferJob, TransferOutcome, run_transfer};
 use crate::types::{DownloadId, DownloadState, Event, Priority};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -27,6 +28,9 @@ struct Inner {
     stop: CancellationToken,
     /// Something ran since the last AllDone.
     ran: AtomicBool,
+    schedule: Mutex<Option<Schedule>>,
+    /// Downloads the schedule paused, to requeue when the window opens.
+    auto_paused: Mutex<HashSet<DownloadId>>,
 }
 
 #[derive(Clone)]
@@ -50,6 +54,8 @@ impl Queue {
                 wake: Notify::new(),
                 stop: CancellationToken::new(),
                 ran: AtomicBool::new(false),
+                schedule: Mutex::new(None),
+                auto_paused: Mutex::new(HashSet::new()),
             }),
         };
         let inner = q.inner.clone();
@@ -146,6 +152,13 @@ impl Queue {
         self.ctx().global_limit.set_rate(bps);
     }
 
+    /// Outside the window nothing starts and running downloads pause; they resume
+    /// when the window opens. `None` means no restriction.
+    pub fn set_schedule(&self, s: Option<Schedule>) {
+        *self.inner.schedule.lock().unwrap() = s;
+        self.inner.wake.notify_one();
+    }
+
     /// Pauses everything, saves, and stops the dispatcher. Used on app exit.
     pub async fn shutdown(&self) {
         self.inner.stop.cancel();
@@ -180,6 +193,30 @@ fn dispatch(inner: &Arc<Inner>) {
     if inner.stop.is_cancelled() {
         return;
     }
+    let allowed = inner
+        .schedule
+        .lock()
+        .unwrap()
+        .as_ref()
+        .is_none_or(|s| is_within_window(chrono::Local::now().naive_local(), s));
+    if !allowed {
+        let running = inner.running.lock().unwrap();
+        let mut auto = inner.auto_paused.lock().unwrap();
+        for (id, r) in running.iter() {
+            if !r.removing && auto.insert(*id) {
+                r.cancel.cancel();
+            }
+        }
+        return;
+    }
+    let requeue: Vec<DownloadId> = inner.auto_paused.lock().unwrap().drain().collect();
+    for id in requeue {
+        if inner.ctx.store.get_download(id).is_ok_and(|d| d.state == DownloadState::Paused) {
+            let _ = inner.ctx.store.set_state(id, DownloadState::Queued, None);
+            inner.ctx.events.send(Event::StateChanged { id, state: DownloadState::Queued, error: None });
+        }
+    }
+
     let Ok(rows) = inner.ctx.store.list_downloads() else { return };
     let max = inner.max_parallel.load(SeqCst);
     let mut running = inner.running.lock().unwrap();

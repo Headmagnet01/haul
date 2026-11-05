@@ -223,6 +223,45 @@ async fn all_done_emitted_once() {
 }
 
 #[tokio::test]
+async fn schedule_blocks_start() {
+    let srv = serve(Spec::new(200_000)).await;
+    let dir = tempfile::tempdir().unwrap();
+    let c = ctx_on(Store::open_in_memory().unwrap(), TransferConfig::for_tests());
+    let q = Queue::start(c.clone(), 3);
+    // No weekdays chosen: the window never includes now.
+    q.set_schedule(Some(haul_engine::Schedule {
+        start: chrono::NaiveTime::from_hms_opt(0, 0, 0).unwrap(),
+        stop: chrono::NaiveTime::from_hms_opt(0, 0, 0).unwrap(),
+        weekdays: vec![],
+    }));
+    let a = q.add(nd(&srv.url, dir.path(), Priority::Normal)).unwrap();
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    assert_eq!(c.store.get_download(a).unwrap().state, DownloadState::Queued);
+    q.set_schedule(None);
+    wait_state(&c.store, a, DownloadState::Completed, 5).await;
+}
+
+#[tokio::test]
+async fn schedule_pauses_running_and_resumes() {
+    let srv = slow_server(20_000_000, 2_000_000).await;
+    let dir = tempfile::tempdir().unwrap();
+    let c = ctx_on(Store::open_in_memory().unwrap(), TransferConfig::for_tests());
+    let q = Queue::start(c.clone(), 3);
+    let a = q.add(nd(&srv.url, dir.path(), Priority::Normal)).unwrap();
+    wait_state(&c.store, a, DownloadState::Running, 5).await;
+    let never = haul_engine::Schedule {
+        start: chrono::NaiveTime::from_hms_opt(0, 0, 0).unwrap(),
+        stop: chrono::NaiveTime::from_hms_opt(0, 0, 0).unwrap(),
+        weekdays: vec![],
+    };
+    q.set_schedule(Some(never));
+    wait_state(&c.store, a, DownloadState::Paused, 5).await;
+    q.set_schedule(None);
+    wait_state(&c.store, a, DownloadState::Running, 5).await;
+    q.shutdown().await;
+}
+
+#[tokio::test]
 async fn set_max_parallel_clamps() {
     let c = ctx_on(Store::open_in_memory().unwrap(), TransferConfig::for_tests());
     let q = Queue::start(c, 3);
