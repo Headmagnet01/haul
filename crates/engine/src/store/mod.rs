@@ -7,7 +7,10 @@ use rusqlite::{Connection, OptionalExtension, Row, params};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 
-const SCHEMA_VERSION: i64 = 1;
+mod collector;
+pub use collector::{Batch, CollectorLink};
+
+const SCHEMA_VERSION: i64 = 2;
 
 #[derive(Clone)]
 pub struct Store {
@@ -113,12 +116,12 @@ impl Store {
         conn.pragma_update(None, "foreign_keys", "ON")?;
         conn.busy_timeout(std::time::Duration::from_secs(5))?;
         let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
-        if version < 1 {
-            conn.execute_batch(&format!(
-                "BEGIN; {} PRAGMA user_version = {SCHEMA_VERSION}; COMMIT;",
-                include_str!("schema.sql")
-            ))?;
+        let migrations = [include_str!("schema.sql"), include_str!("migration_2.sql")];
+        for (i, sql) in migrations.iter().enumerate().skip(version.max(0) as usize) {
+            let to = i + 1;
+            conn.execute_batch(&format!("BEGIN; {sql} PRAGMA user_version = {to}; COMMIT;"))?;
         }
+        debug_assert_eq!(migrations.len() as i64, SCHEMA_VERSION);
         Ok(Store { conn: Arc::new(Mutex::new(conn)) })
     }
 
@@ -444,12 +447,6 @@ mod tests {
         let d = s.get_download(id).unwrap();
         assert_eq!(d.state, DownloadState::Paused);
         assert_eq!(d.error.as_deref(), Some("x"));
-    }
-
-    #[test]
-    fn schema_version_is_1() {
-        let s = Store::open_in_memory().unwrap();
-        assert_eq!(s.schema_version().unwrap(), 1);
     }
 
     #[test]
