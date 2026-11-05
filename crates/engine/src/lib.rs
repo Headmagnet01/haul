@@ -2,6 +2,8 @@
 
 pub mod error;
 pub mod events;
+pub mod naming;
+pub mod segmenter;
 pub mod types;
 
 pub use error::EngineError;
