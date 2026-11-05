@@ -4,7 +4,7 @@
 //! query (or the store lock held by a transfer saving segments) never freezes the window.
 
 use crate::core::{AppCore, FolderTarget};
-use crate::dto::{AddResult, Snapshot, SpeedLimit};
+use crate::dto::{CollectorFilters, CollectorSnapshot, IntakeResult, Snapshot, SpeedLimit, StartResult};
 use tauri::{AppHandle, State};
 use tauri_plugin_opener::OpenerExt;
 
@@ -24,8 +24,38 @@ pub async fn snapshot(core: State<'_, AppCore>) -> R<Snapshot> {
 }
 
 #[tauri::command]
-pub async fn add_links(core: State<'_, AppCore>, text: String) -> R<AddResult> {
-    blocking(&core, move |c| c.add_links(&text).map_err(|e| e.to_string())).await
+pub async fn add_links(core: State<'_, AppCore>, text: String, source: String) -> R<IntakeResult> {
+    blocking(&core, move |c| c.add_links(&text, &source).map_err(|e| e.to_string())).await
+}
+
+#[tauri::command]
+pub async fn collector_snapshot(core: State<'_, AppCore>) -> R<CollectorSnapshot> {
+    blocking(&core, |c| c.collector_snapshot().map_err(|e| e.to_string())).await
+}
+
+#[tauri::command]
+pub async fn collector_start(core: State<'_, AppCore>, ids: Vec<i64>) -> R<StartResult> {
+    blocking(&core, move |c| c.collector_start(&ids).map_err(|e| e.to_string())).await
+}
+
+#[tauri::command]
+pub async fn collector_remove(core: State<'_, AppCore>, ids: Vec<i64>) -> R<()> {
+    blocking(&core, move |c| c.collector_remove(&ids).map_err(|e| e.to_string())).await
+}
+
+#[tauri::command]
+pub async fn collector_recheck(core: State<'_, AppCore>, ids: Vec<i64>) -> R<()> {
+    blocking(&core, move |c| c.collector_recheck(&ids).map_err(|e| e.to_string())).await
+}
+
+#[tauri::command]
+pub async fn set_collector_filters(core: State<'_, AppCore>, filters: CollectorFilters) -> R<()> {
+    blocking(&core, move |c| c.set_collector_filters(filters).map_err(|e| e.to_string())).await
+}
+
+#[tauri::command]
+pub async fn set_watch_clipboard(core: State<'_, AppCore>, on: bool) -> R<()> {
+    blocking(&core, move |c| c.set_watch_clipboard(on).map_err(|e| e.to_string())).await
 }
 
 #[tauri::command]

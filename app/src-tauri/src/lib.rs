@@ -38,6 +38,12 @@ pub fn run() {
             commands::reorder,
             commands::set_speed_limit,
             commands::open_folder,
+            commands::collector_snapshot,
+            commands::collector_start,
+            commands::collector_remove,
+            commands::collector_recheck,
+            commands::set_collector_filters,
+            commands::set_watch_clipboard,
         ])
         .setup(|app| {
             if let Some(g) = app.path().app_log_dir().ok().and_then(|d| init_logging(&d)) {

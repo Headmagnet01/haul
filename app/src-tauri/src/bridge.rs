@@ -12,6 +12,7 @@ pub struct Batcher {
     states: Vec<StateView>,
     steals: Vec<StealView>,
     resync: bool,
+    collector: bool,
 }
 
 impl Batcher {
@@ -36,7 +37,8 @@ impl Batcher {
             Event::Steal { id, bytes } => self.steals.push(StealView { id: *id, bytes: *bytes }),
             // The UI drops the row on its next snapshot.
             Event::Removed { .. } => self.resync = true,
-            Event::AllDone | Event::CollectorChanged => {}
+            Event::CollectorChanged => self.collector = true,
+            Event::AllDone => {}
         }
     }
 
@@ -46,11 +48,22 @@ impl Batcher {
     }
 
     pub fn take(&mut self) -> Option<Update> {
-        if self.progress.is_empty() && self.states.is_empty() && self.steals.is_empty() && !self.resync {
+        if self.progress.is_empty()
+            && self.states.is_empty()
+            && self.steals.is_empty()
+            && !self.resync
+            && !self.collector
+        {
             return None;
         }
         let b = std::mem::take(self);
-        Some(Update { progress: b.progress, states: b.states, steals: b.steals, resync: b.resync })
+        Some(Update {
+            progress: b.progress,
+            states: b.states,
+            steals: b.steals,
+            resync: b.resync,
+            collector: b.collector,
+        })
     }
 }
 
@@ -133,6 +146,17 @@ mod tests {
         assert!(b.take().is_none());
         b.push(&prog(1, 1));
         assert!(b.take().is_some());
+        assert!(b.take().is_none(), "take resets");
+    }
+
+    #[test]
+    fn collector_change_sets_flag() {
+        let mut b = Batcher::default();
+        b.push(&Event::CollectorChanged);
+        b.push(&Event::CollectorChanged);
+        let u = b.take().unwrap();
+        assert!(u.collector);
+        assert!(u.progress.is_empty() && u.states.is_empty() && u.steals.is_empty() && !u.resync);
         assert!(b.take().is_none(), "take resets");
     }
 
