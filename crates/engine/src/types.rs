@@ -96,6 +96,10 @@ pub enum Event {
         id: DownloadId,
         bytes: u64,
     },
+    /// The row is gone from the store (sent after a remove, including a deferred one).
+    Removed {
+        id: DownloadId,
+    },
     AllDone,
 }
 

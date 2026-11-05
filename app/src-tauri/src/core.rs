@@ -21,6 +21,8 @@ pub enum FolderTarget {
     OpenDir(PathBuf),
 }
 
+/// Cheap to clone: every field is a shared handle, so commands can move a copy onto a blocking thread.
+#[derive(Clone)]
 pub struct AppCore {
     store: Store,
     ctx: TransferCtx,
@@ -118,12 +120,11 @@ impl AppCore {
             .unwrap_or_default()
     }
 
-    fn view(&self, d: Download) -> Result<DownloadView, EngineError> {
-        let segs = self.store.load_segments(d.id)?;
+    fn view(&self, d: Download, segs: &[haul_engine::Range]) -> DownloadView {
         let size = d.probe.as_ref().and_then(|p| p.size);
         let sum: u64 = segs.iter().map(|r| r.pos.saturating_sub(r.start)).sum();
         let written = if d.state == DownloadState::Completed { size.unwrap_or(sum) } else { sum };
-        Ok(DownloadView {
+        DownloadView {
             id: d.id,
             package_id: d.package_id,
             name: display_name(&d),
@@ -141,12 +142,20 @@ impl AppCore {
             target_path: d.target_path.map(|p| p.to_string_lossy().into_owned()),
             created_at: d.created_at,
             segments: segs.iter().map(|r| [r.start, r.pos, r.end]).collect(),
-        })
+        }
     }
 
     pub fn snapshot(&self) -> Result<Snapshot, EngineError> {
-        let downloads =
-            self.store.list_downloads()?.into_iter().map(|d| self.view(d)).collect::<Result<Vec<_>, _>>()?;
+        let mut segs = self.store.load_all_segments()?;
+        let downloads: Vec<DownloadView> = self
+            .store
+            .list_downloads()?
+            .into_iter()
+            .map(|d| {
+                let s = segs.remove(&d.id).unwrap_or_default();
+                self.view(d, &s)
+            })
+            .collect();
         let used: HashSet<i64> = downloads.iter().filter_map(|d| d.package_id).collect();
         let packages = self
             .store

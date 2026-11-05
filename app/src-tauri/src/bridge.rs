@@ -34,6 +34,8 @@ impl Batcher {
                 self.states.push(StateView { id: *id, state: state.as_str().to_string(), error: error.clone() })
             }
             Event::Steal { id, bytes } => self.steals.push(StealView { id: *id, bytes: *bytes }),
+            // The UI drops the row on its next snapshot.
+            Event::Removed { .. } => self.resync = true,
             Event::AllDone => {}
         }
     }
@@ -132,6 +134,13 @@ mod tests {
         b.push(&prog(1, 1));
         assert!(b.take().is_some());
         assert!(b.take().is_none(), "take resets");
+    }
+
+    #[test]
+    fn removed_requests_resync() {
+        let mut b = Batcher::default();
+        b.push(&Event::Removed { id: 3 });
+        assert!(b.take().unwrap().resync);
     }
 
     #[tokio::test]

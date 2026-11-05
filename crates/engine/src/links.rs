@@ -21,6 +21,7 @@ pub fn extract_links(text: &str) -> Vec<String> {
         let end = text[at..]
             .find(|c: char| c.is_whitespace() || matches!(c, '"' | '\'' | '<' | '>' | '`'))
             .map_or(text.len(), |n| at + n);
+        let end = cut_joined(&lower[at..end], scheme_len).map_or(end, |n| at + n);
         let candidate = trim_trailing(&text[at..end]);
         if candidate.len() > scheme_len
             && let Ok(u) = url::Url::parse(candidate)
@@ -34,6 +35,21 @@ pub fn extract_links(text: &str) -> Vec<String> {
         i = end.max(at + scheme_len);
     }
     out
+}
+
+/// Where a candidate really ends when links are glued together: at a markdown `](`, or where
+/// another link starts right after `,`, `;` or `|`. A `?url=https://...` redirect stays whole.
+fn cut_joined(lower: &str, scheme_len: usize) -> Option<usize> {
+    let md = lower.find("](");
+    let glued = ["http://", "https://"]
+        .iter()
+        .flat_map(|sch| lower.match_indices(sch).map(|(i, _)| i))
+        .filter(|&i| i > scheme_len && matches!(lower.as_bytes()[i - 1], b',' | b';' | b'|'))
+        .min();
+    match (md, glued) {
+        (Some(a), Some(b)) => Some(a.min(b)),
+        (a, b) => a.or(b),
+    }
 }
 
 fn trim_trailing(mut s: &str) -> &str {
@@ -90,6 +106,22 @@ mod tests {
     fn extract_ignores_other_schemes_and_junk() {
         assert!(extract_links("ftp://a.org/x mailto:x@y.z www.a.org https:// http://").is_empty());
         assert!(extract_links("").is_empty());
+    }
+
+    #[test]
+    fn extract_markdown_autolink() {
+        assert_eq!(
+            extract_links("see [https://a.org/x](https://a.org/x) and [docs](https://a.org/d)"),
+            vec!["https://a.org/x", "https://a.org/d"]
+        );
+    }
+
+    #[test]
+    fn extract_comma_joined() {
+        assert_eq!(
+            extract_links("https://a.org/a,https://a.org/b;http://b.net/c"),
+            vec!["https://a.org/a", "https://a.org/b", "http://b.net/c"]
+        );
     }
 
     #[test]

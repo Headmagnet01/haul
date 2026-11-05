@@ -1,6 +1,6 @@
 # Haul: handoff
 
-Last updated: 5 Nov 2026. Plan 1 (engine core) is merged. Plan 2 (Tauri shell + Queue UI) is built on `feat/shell-queue-ui`: all 10 tasks are done and every check is green. A whole-branch review and the merge into `master` are still to come.
+Last updated: 5 Nov 2026. Plan 1 (engine core) is merged. Plan 2 (Tauri shell + Queue UI) is built on `feat/shell-queue-ui`: all 10 tasks are done and reviewed, the review's fixes are in, and every check is green. Only the merge into `master` is left.
 
 ## What Haul is
 A free, open-source Windows download manager. It pairs IDM's fast engine and browser capture with JDownloader 2's link collector, packages and auto-extraction, in a calm "dispatch board" interface.
@@ -14,9 +14,9 @@ A free, open-source Windows download manager. It pairs IDM's fast engine and bro
 |---|---|
 | Branch | `feat/shell-queue-ui`, cut from `master` at `34e6ab9`. Not merged yet. No Git remote exists. |
 | Done | Plan 1 (engine core) and plan 2 (`docs/superpowers/plans/2026-11-05-haul-plan-2-shell-queue-ui.md`, Tasks 1–10). |
-| Tests | Rust: 108 (97 engine + 11 app). Front end: 34 Vitest unit tests and 27 Playwright e2e tests, run in both light and dark (54 runs). Clippy, rustfmt and svelte-check are clean. |
+| Tests | Rust: 113 tests (engine + app). Front end: 36 Vitest unit tests and 28 Playwright e2e tests, run in both light and dark (56 runs), plus 2 real-app smoke tests. Clippy, rustfmt and svelte-check are clean. |
 | Real-app check | Smoke test against the real app (`npm run smoke`): add, pause at 30%+, resume and complete; the SHA-256 matches. Closing the window mid-download and relaunching showed the row Paused, and Space resumed it with ranged requests starting mid-range, not from 0. |
-| Next | 1. A fresh whole-branch review of plan 2, then merge into `master`. 2. Plan 3: the Collector and clipboard watching (spec section 5). |
+| Next | 1. Merge `feat/shell-queue-ui` into `master`. 2. Plan 3: the Collector and clipboard watching (spec section 5). |
 
 ## The app, and how to run it
 - **Real app:** `cd app` and `npx tauri dev`. The window is titled Haul, 1280×800 by default.
@@ -29,7 +29,7 @@ A free, open-source Windows download manager. It pairs IDM's fast engine and bro
 - **Real-app smoke test.** Use three shells:
   1. `node scripts/range-server.mjs 8765`
   2. `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9222 npx tauri dev`
-  3. `npm run smoke`
+  3. `npm run smoke` (two tests: a full download with a pause and a SHA-256 check, and removing a running download)
   - The smoke files go to the app's save folder. Point `download_dir` in the settings table at a scratch folder first, or they land in your Downloads.
 - **Layout of `app/`:**
   - `src-tauri/`: the `haul-app` crate.
@@ -66,6 +66,24 @@ Each line says what it costs if the decision is wrong.
   - Speed history gets one sample per update.
   - The drawer has a Remove button.
   - The full list with reasons is in `.superpowers/sdd/2026-11-05-haul-plan-2-shell-queue-ui/progress.md` (git-ignored).
+
+## Plan 2 review (5 Nov 2026)
+A fresh reviewer read the whole branch and found no Critical issues and 4 Important ones. Each fix has a test that failed first.
+- **Removing a running download left a ghost "Paused" row.** The engine now sends `Event::Removed` after the delete, and the UI keeps the row hidden until a snapshot drops it.
+- **Updates that arrived during a snapshot load were lost.** Only the newest load now applies, the updates seen during a load are replayed onto it, and resync requests are coalesced.
+- **Commands ran on the main thread.** They are now async and do their store work on a blocking thread. A snapshot also loads all segments in one query.
+- **Markdown `[url](url)` and comma-joined links** produced bogus downloads. `extract_links` now splits them.
+
+Deferred minors, each a small follow-up:
+- **Error handling:**
+  - Errors in remove, reorder and add get no toast or rollback, and the same goes for a failed speed-limit change.
+  - A startup failure panics with no dialog.
+- **Small display and state bugs:**
+  - Rows waiting in the Undo window still count toward the total speed.
+  - `lastSteal` is never pruned.
+  - A queued file whose size is known to be 0 bytes shows 100%.
+- **Capability:** it grants `opener:default`, which the UI doesn't use; drop it along with the JS package.
+- **Data folder:** dev and release builds share the `dev.haul.desktop` data folder.
 
 ## How to build and test
 The toolchain is already installed on this PC:

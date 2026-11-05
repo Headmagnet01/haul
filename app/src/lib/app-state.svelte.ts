@@ -37,19 +37,53 @@ export function createAppState(backend: Backend) {
   const visible = $derived(snapshot.downloads.filter((d) => !hidden.has(d.id)));
   const totals = $derived(summary(visible, speeds));
 
+  // Loads can overlap and updates keep arriving while one is in flight. Only the newest
+  // snapshot applies, and every update seen during a load is replayed onto it, so a state
+  // change that landed between the engine's DB read and the reply is never lost.
+  let gen = 0;
+  let inflight = 0;
+  let buffered: Update[] = [];
+  let again = false;
+
+  function requestLoad() {
+    if (inflight > 0) again = true;
+    else void load();
+  }
+
   async function load() {
-    const snap = await backend.snapshot();
-    snapshot = snap;
-    byId = new Map(snapshot.downloads.map((d) => [d.id, d]));
-    for (const id of [...speeds.keys()]) if (!byId.has(id)) speeds.delete(id);
-    for (const id of [...ranges.keys()]) if (!byId.has(id)) { ranges.delete(id); rangeSpeeds.forget(id); }
-    if (selected !== null && !byId.has(selected)) selected = null;
-    if (selectedPkg !== null && !snapshot.packages.some((p) => p.id === selectedPkg)) selectedPkg = null;
-    loaded = true;
+    const my = ++gen;
+    if (inflight++ === 0) buffered = [];
+    try {
+      const snap = await backend.snapshot();
+      if (my !== gen) return;
+      snapshot = snap;
+      byId = new Map(snapshot.downloads.map((d) => [d.id, d]));
+      for (const u of buffered) {
+        applyUpdate(byId, speeds, { ...u, resync: false });
+        const ids = [...u.progress, ...u.states, ...u.steals].map((x) => x.id);
+        if (ids.some((id) => !byId.has(id))) again = true; // added after the snapshot was read
+      }
+      for (const id of [...speeds.keys()]) if (!byId.has(id)) speeds.delete(id);
+      const undoable = new Set(pendingRemoval?.ids ?? []);
+      for (const id of [...hidden]) if (!byId.has(id) && !undoable.has(id)) hidden.delete(id);
+      for (const id of [...ranges.keys()]) if (!byId.has(id)) { ranges.delete(id); rangeSpeeds.forget(id); }
+      if (selected !== null && !byId.has(selected)) selected = null;
+      if (selectedPkg !== null && !snapshot.packages.some((p) => p.id === selectedPkg)) selectedPkg = null;
+      loaded = true;
+    } finally {
+      if (--inflight === 0) {
+        buffered = [];
+        if (again) {
+          again = false;
+          void load();
+        }
+      }
+    }
   }
 
   const listeners = new Set<(u: Update) => void>();
   backend.onUpdate((u) => {
+    if (inflight > 0) buffered.push(u);
     const r = applyUpdate(byId, speeds, u);
     const now = performance.now();
     for (const p of u.progress) {
@@ -61,7 +95,7 @@ export function createAppState(backend: Backend) {
     for (const v of speeds.values()) total += v;
     speedHistory = [...speedHistory, total].slice(-HISTORY);
     listeners.forEach((cb) => cb(u));
-    if (r.resync) void load();
+    if (r.resync) requestLoad();
   });
 
   function showToast(text: string, action?: ToastMsg['action'], ms = 4000) {
@@ -93,9 +127,10 @@ export function createAppState(backend: Backend) {
     if (!p) return;
     pendingRemoval = null;
     clearTimeout(p.timer);
+    // Rows stay hidden until a snapshot no longer has them: a running download is deleted
+    // only after its transfer stops, so the next snapshot may still include it.
     await backend.remove(p.ids);
     await load();
-    p.ids.forEach((id) => hidden.delete(id));
   }
 
   function undo() {

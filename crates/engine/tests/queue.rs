@@ -291,3 +291,25 @@ async fn reorder_changes_start_order() {
     assert_eq!(c.store.get_download(a).unwrap().state, DownloadState::Queued);
     q.shutdown().await;
 }
+
+#[tokio::test]
+async fn removing_running_download_emits_removed() {
+    let srv = slow_server(5_000_000, 500_000).await;
+    let dir = tempfile::tempdir().unwrap();
+    let c = ctx_on(Store::open_in_memory().unwrap(), TransferConfig::for_tests());
+    let mut rx = c.events.subscribe();
+    let q = Queue::start(c.clone(), 3);
+    let a = q.add(nd(&srv.url, dir.path(), Priority::Normal)).unwrap();
+    wait_state(&c.store, a, DownloadState::Running, 5).await;
+    q.remove(a);
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        let ev = tokio::time::timeout_at(deadline, rx.recv()).await.expect("no Removed event").unwrap();
+        if let Event::Removed { id } = ev {
+            assert_eq!(id, a);
+            break;
+        }
+    }
+    assert!(c.store.get_download(a).is_err(), "row deleted before Removed is sent");
+    assert_eq!(part_files(dir.path()), 0);
+}

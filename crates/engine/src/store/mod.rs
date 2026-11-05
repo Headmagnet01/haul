@@ -297,6 +297,28 @@ impl Store {
         Ok(rows)
     }
 
+    /// Every download's segments in one query, each list ordered by start.
+    pub fn load_all_segments(&self) -> Result<std::collections::HashMap<DownloadId, Vec<Range>>, EngineError> {
+        let c = self.lock();
+        let mut st = c.prepare("SELECT download_id, start, pos, \"end\" FROM segments ORDER BY download_id, start")?;
+        let mut out: std::collections::HashMap<DownloadId, Vec<Range>> = std::collections::HashMap::new();
+        let rows = st.query_map([], |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                Range {
+                    start: r.get::<_, i64>(1)? as u64,
+                    pos: r.get::<_, i64>(2)? as u64,
+                    end: r.get::<_, i64>(3)? as u64,
+                },
+            ))
+        })?;
+        for row in rows {
+            let (id, range) = row?;
+            out.entry(id).or_default().push(range);
+        }
+        Ok(out)
+    }
+
     pub fn get_setting(&self, key: &str) -> Result<Option<serde_json::Value>, EngineError> {
         let v: Option<String> =
             self.lock().query_row("SELECT value FROM settings WHERE key = ?1", [key], |r| r.get(0)).optional()?;
@@ -482,6 +504,19 @@ mod tests {
         let s = Store::open_in_memory().unwrap();
         let id = s.insert_download(&nd(Priority::Normal)).unwrap();
         assert_eq!(s.get_download(id).unwrap().created_at.len(), 20);
+    }
+
+    #[test]
+    fn all_segments_grouped_by_download() {
+        let s = Store::open_in_memory().unwrap();
+        let a = s.insert_download(&nd(Priority::Normal)).unwrap();
+        let b = s.insert_download(&nd(Priority::Normal)).unwrap();
+        s.save_segments(a, &[Range { start: 10, pos: 15, end: 20 }, Range { start: 0, pos: 5, end: 10 }]).unwrap();
+        s.save_segments(b, &[Range { start: 0, pos: 1, end: 2 }]).unwrap();
+        let all = s.load_all_segments().unwrap();
+        assert_eq!(all.len(), 2);
+        assert_eq!(all[&a], vec![Range { start: 0, pos: 5, end: 10 }, Range { start: 10, pos: 15, end: 20 }]);
+        assert_eq!(all[&b], vec![Range { start: 0, pos: 1, end: 2 }]);
     }
 
     #[test]

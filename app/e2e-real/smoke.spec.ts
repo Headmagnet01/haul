@@ -49,3 +49,29 @@ test('real download: add, pause, resume, complete, verify', async () => {
   const got = createHash('sha256').update(readFileSync(saved)).digest('hex');
   expect(got).toBe(expectedSha());
 });
+
+test('removing a running download leaves no ghost row', async () => {
+  const page = await appPage();
+  await page.evaluate((t) => {
+    const dt = new DataTransfer();
+    dt.setData('text/plain', t);
+    document.body.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+  }, `${URL_}?remove`);
+  const rows = page.locator('[role="row"][data-kind="file"]');
+  const row = rows.last();
+  await expect(row).toContainText('Downloading', { timeout: 5000 });
+  const before = await rows.count();
+  const id = await row.getAttribute('data-id');
+  await row.click();
+  await page.keyboard.press('Delete');
+  const mine = page.locator(`[role="row"][data-id="${id}"]`);
+  await expect(mine).toHaveCount(0);
+  // Undo window (6 s), then the engine stops the transfer and deletes the row.
+  const seen: number[] = [];
+  for (let i = 0; i < 80; i++) {
+    seen.push(await mine.count());
+    await page.waitForTimeout(100);
+  }
+  expect(Math.max(...seen)).toBe(0);
+  await expect(rows).toHaveCount(before - 1);
+});

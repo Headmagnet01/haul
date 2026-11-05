@@ -61,3 +61,20 @@ test('alt_arrow_reorders', async ({ page }) => {
   expect(await calls(page)).toContain('reorder');
   await expect(fileRows(page).filter({ hasText: 'three.bin' })).toHaveAttribute('aria-selected', 'true');
 });
+
+test('removed_running_row_never_reappears', async ({ page }) => {
+  test.setTimeout(20_000);
+  await page.goto('/?demo=1');
+  const iso = fileRows(page).filter({ hasText: ISO });
+  await iso.click();
+  await expect(iso).toContainText('Downloading');
+  await page.keyboard.press('Delete');
+  await page.waitForTimeout(5500);
+  const seen: number[] = [];
+  for (let i = 0; i < 60; i++) {
+    seen.push(await iso.count());
+    await page.waitForTimeout(50);
+  }
+  expect(await calls(page)).toContain('remove');
+  expect(Math.max(...seen)).toBe(0);
+});

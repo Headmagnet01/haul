@@ -95,6 +95,8 @@ export function createMockBackend(opts: { tickMs: number; demo: boolean }): Back
   let nextId = 1;
   let nextPkg = 1;
   let limit = readLimit();
+  // Like the engine: a running row is removed only after its transfer stops (one tick later).
+  const removing = new Set<number>();
   const tickS = opts.tickMs / 1000;
 
   const sort = () => {
@@ -136,6 +138,16 @@ export function createMockBackend(opts: { tickMs: number; demo: boolean }): Back
   }
 
   function tick() {
+    if (removing.size) {
+      for (const id of removing) {
+        const d = downloads.find((x) => x.id === id);
+        if (d) setState(d, 'paused');
+        sims.delete(id);
+      }
+      downloads = downloads.filter((d) => !removing.has(d.id));
+      removing.clear();
+      pending.resync = true; // the bridge turns the engine's Removed event into a resync
+    }
     // Start queued rows up to the parallel limit.
     let running = downloads.filter((d) => d.state === 'running').length;
     for (const d of downloads) {
@@ -148,7 +160,7 @@ export function createMockBackend(opts: { tickMs: number; demo: boolean }): Back
         running++;
       }
     }
-    const active = downloads.filter((d) => d.state === 'running');
+    const active = downloads.filter((d) => d.state === 'running' && !removing.has(d.id));
     let total = 0;
     for (const d of active) {
       const s = simFor(d);
@@ -275,8 +287,9 @@ export function createMockBackend(opts: { tickMs: number; demo: boolean }): Back
     },
     async remove(ids) {
       rec('remove');
-      downloads = downloads.filter((d) => !ids.includes(d.id));
-      ids.forEach((id) => sims.delete(id));
+      for (const id of ids) if (find(id)?.state === 'running') removing.add(id);
+      downloads = downloads.filter((d) => !ids.includes(d.id) || removing.has(d.id));
+      ids.filter((id) => !removing.has(id)).forEach((id) => sims.delete(id));
     },
     async pauseAll() {
       rec('pauseAll');

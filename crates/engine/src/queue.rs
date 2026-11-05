@@ -196,7 +196,9 @@ fn delete_row_and_part(ctx: &TransferCtx, id: DownloadId) {
             tracing::warn!(id, error = %e, "could not delete part file");
         }
     }
-    let _ = ctx.store.delete_download(id);
+    if ctx.store.delete_download(id).is_ok() {
+        ctx.events.send(Event::Removed { id });
+    }
 }
 
 /// Starts queued downloads while slots are free; emits AllDone once the queue drains.
