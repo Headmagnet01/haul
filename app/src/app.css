@@ -1,0 +1,44 @@
+/* Tokens from DESIGN.md and the mockup. --ink-3 is darkened for WCAG AA (plan 2 ruling). */
+:root {
+  --bg: #f1eee6; --surface: #faf8f3; --raised: #ffffff; --ink: #1c1b19; --ink-2: #5f5a51; --ink-3: #6b6559;
+  --line: #ded8cb; --line-2: #e9e4d9; --track: #e6e1d5; --signal: #d9520b; --signal-ink: #ffffff; --signal-soft: #f6dccb;
+  --ok: #2e7a4d; --ok-soft: #d8ebdf; --err: #b8352a; --err-soft: #f3d9d5; --idle: #a7a194;
+  --sel: #ece5d6; --focus: #d9520b;
+  --mono: 'IBM Plex Mono', ui-monospace, Consolas, monospace;
+  --sans: 'IBM Plex Sans', system-ui, 'Segoe UI', sans-serif;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #141412; --surface: #1a1a17; --raised: #22221e; --ink: #ece8df; --ink-2: #a7a296; --ink-3: #8f8b82;
+    --line: #2d2c28; --line-2: #262521; --track: #2c2b27; --signal: #ff7b33; --signal-ink: #1a0e06; --signal-soft: #3a2416;
+    --ok: #55b57f; --ok-soft: #1d3326; --err: #ec6457; --err-soft: #3a1e1b; --idle: #5e5b54; --sel: #26251f; --focus: #ff7b33;
+    color-scheme: dark;
+  }
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body, #app { height: 100%; }
+body {
+  background: var(--bg); color: var(--ink); font: 14px/1.4 var(--sans);
+  -webkit-font-smoothing: antialiased; overflow: hidden;
+}
+button, input, select, textarea { font: inherit; color: inherit; }
+button { background: none; border: 0; cursor: pointer; }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 4px; }
+.num { font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: 12.5px; }
+[hidden] { display: none !important; }
+
+.btn {
+  display: inline-flex; align-items: center; gap: 7px; padding: 6px 12px; border-radius: 6px;
+  border: 1px solid var(--line); background: var(--raised); font-size: 13px; font-weight: 500;
+  transition: border-color 0.15s;
+}
+.btn:hover { border-color: var(--ink-3); }
+.btn.primary { background: var(--ink); color: var(--surface); border-color: var(--ink); }
+.btn kbd { font: 500 10.5px var(--mono); opacity: 0.75; }
+.btn svg { width: 14px; height: 14px; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}
