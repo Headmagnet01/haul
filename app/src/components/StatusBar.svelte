@@ -2,9 +2,10 @@
   import Sparkline from './Sparkline.svelte';
   import Icon from './Icon.svelte';
   import type { AppState } from '../lib/app-state.svelte';
+  import type { CollectorState } from '../lib/collector-state.svelte';
   import { formatSpeed } from '../lib/format';
 
-  let { app }: { app: AppState } = $props();
+  let { app, collector }: { app: AppState; collector: CollectorState } = $props();
   const limit = $derived(app.snapshot.speedLimit);
   const limitText = $derived(formatSpeed(limit.bps).replace(/\.0 /, ' '));
 </script>
@@ -25,6 +26,15 @@
     onclick={() => app.setSpeedLimit({ enabled: !limit.enabled, bps: limit.bps })}
   >
     <span class="sw" aria-hidden="true"></span>Speed limit <span class="num lim">{limitText}</span>
+  </button>
+  <button
+    type="button"
+    class="tog"
+    aria-pressed={collector.snapshot.watchClipboard}
+    title="Copied links appear in the Collector"
+    onclick={() => collector.setWatchClipboard(!collector.snapshot.watchClipboard)}
+  >
+    <span class="sw" aria-hidden="true"></span>Watch clipboard
   </button>
 </footer>
 

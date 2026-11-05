@@ -46,7 +46,7 @@ describe('buildList', () => {
 });
 
 describe('applyUpdate', () => {
-  const upd = (u: Partial<Update>): Update => ({ progress: [], states: [], steals: [], resync: false, ...u });
+  const upd = (u: Partial<Update>): Update => ({ progress: [], states: [], steals: [], resync: false, collector: false, ...u });
   test('progress and states', () => {
     const byId = new Map(snap().downloads.map((d) => [d.id, d]));
     const speeds = new Map<number, number>();

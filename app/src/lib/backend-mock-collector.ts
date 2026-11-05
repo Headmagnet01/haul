@@ -85,7 +85,7 @@ export function createMockCollector(o: MockCollectorOpts) {
       const r = checkResult(live.url);
       live.status = r.status;
       live.message = r.message;
-      live.size = r.status === 'online' ? o.sizeFor(live.url) : null;
+      live.size = r.status === 'online' ? (live.size ?? o.sizeFor(live.url)) : null;
       live.contentType = r.status === 'online' ? contentTypeFor(live.name) : null;
       o.changed();
     }, o.checkMs);
@@ -200,7 +200,7 @@ export function createMockCollector(o: MockCollectorOpts) {
       o.changed();
     },
     setFilters(f: CollectorFilters) {
-      filters = structuredClone(f);
+      filters = JSON.parse(JSON.stringify(f)) as CollectorFilters; // like invoke: plain JSON
       save(FILTERS_KEY, filters);
     },
     setWatch(on: boolean) {
