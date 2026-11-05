@@ -16,6 +16,10 @@ pub mod types;
 
 pub use error::EngineError;
 pub use events::EventBus;
+pub use grabber::{
+    ArchiveKind, CollectedLink, CollectorPackage, CollectorState, DupKind, Grabber, IntakeResult, ProbeFn,
+    StartDefaults, http_prober,
+};
 pub use links::extract_links;
 pub use probe::{http_client, probe};
 pub use queue::Queue;

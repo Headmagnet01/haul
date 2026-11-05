@@ -135,6 +135,8 @@ pub enum Event {
         id: DownloadId,
     },
     AllDone,
+    /// Collector links were added, checked, started or removed.
+    CollectorChanged,
 }
 
 #[cfg(test)]

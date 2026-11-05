@@ -36,7 +36,7 @@ impl Batcher {
             Event::Steal { id, bytes } => self.steals.push(StealView { id: *id, bytes: *bytes }),
             // The UI drops the row on its next snapshot.
             Event::Removed { .. } => self.resync = true,
-            Event::AllDone => {}
+            Event::AllDone | Event::CollectorChanged => {}
         }
     }
 
