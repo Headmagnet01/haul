@@ -271,3 +271,23 @@ async fn set_max_parallel_clamps() {
     q.set_max_parallel(50);
     assert_eq!(q.max_parallel(), 20);
 }
+
+#[tokio::test]
+async fn reorder_changes_start_order() {
+    let srv = slow_server(2_000_000, 1_000_000).await;
+    let dir = tempfile::tempdir().unwrap();
+    let c = ctx_on(Store::open_in_memory().unwrap(), TransferConfig::for_tests());
+    let q = Queue::start(c.clone(), 1);
+    q.set_schedule(Some(haul_engine::Schedule {
+        start: chrono::NaiveTime::from_hms_opt(0, 0, 0).unwrap(),
+        stop: chrono::NaiveTime::from_hms_opt(0, 0, 0).unwrap(),
+        weekdays: vec![],
+    }));
+    let a = q.add(nd(&srv.url, dir.path(), Priority::Normal)).unwrap();
+    let b = q.add(nd(&srv.url, dir.path(), Priority::Normal)).unwrap();
+    q.reorder(&[b, a]);
+    q.set_schedule(None);
+    wait_state(&c.store, b, DownloadState::Running, 5).await;
+    assert_eq!(c.store.get_download(a).unwrap().state, DownloadState::Queued);
+    q.shutdown().await;
+}

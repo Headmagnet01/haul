@@ -145,6 +145,12 @@ impl Queue {
         }
     }
 
+    /// Moves `ids` to the front of their priority bands, in that order (see `Store::reorder`).
+    pub fn reorder(&self, ids: &[DownloadId]) {
+        let _ = self.ctx().store.reorder(ids);
+        self.inner.wake.notify_one();
+    }
+
     pub fn set_max_parallel(&self, n: usize) {
         self.inner.max_parallel.store(n.clamp(1, MAX_PARALLEL), SeqCst);
         self.inner.wake.notify_one();
