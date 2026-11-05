@@ -1,0 +1,18 @@
+# Rust / Tauri
+target/
+app/src-tauri/target/
+app/src-tauri/gen/
+# Node
+node_modules/
+dist/
+build/
+.svelte-kit/
+# Extension builds
+extension/dist/
+*.zip
+# Local
+_tmp/
+*.log
+.env
+.DS_Store
+Thumbs.db
