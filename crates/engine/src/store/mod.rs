@@ -179,6 +179,12 @@ impl Store {
         Ok(())
     }
 
+    /// Fixes the file name the first time a download is probed, so resumes find the same part file.
+    pub fn set_file_name(&self, id: DownloadId, name: &str) -> Result<(), EngineError> {
+        self.lock().execute("UPDATE downloads SET file_name = ?2 WHERE id = ?1", params![id, name])?;
+        Ok(())
+    }
+
     pub fn set_state(&self, id: DownloadId, s: DownloadState, error: Option<&str>) -> Result<(), EngineError> {
         self.lock().execute(
             "UPDATE downloads SET state = ?2, error = ?3 WHERE id = ?1",
