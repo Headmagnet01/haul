@@ -65,7 +65,7 @@ Each line says what it costs if the decision is wrong.
   - The speed-limit label reads "10 MB/s".
   - Speed history gets one sample per update.
   - The drawer has a Remove button.
-  - The full list with reasons is in `.superpowers/sdd/2026-11-05-haul-plan-2-shell-queue-ui/progress.md` (git-ignored).
+  - The executor ledger was deleted after the review, as the workflow says; this section and the commit messages are the record.
 
 ## Plan 2 review (5 Nov 2026)
 A fresh reviewer read the whole branch and found no Critical issues and 4 Important ones. Each fix has a test that failed first.
