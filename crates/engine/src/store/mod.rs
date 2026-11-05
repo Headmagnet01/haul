@@ -1,0 +1,395 @@
+//! SQLite persistence: downloads, segments, packages and settings.
+
+use crate::error::EngineError;
+use crate::segmenter::Range;
+use crate::types::{DownloadId, DownloadState, PackageId, Priority, ProbeInfo};
+use rusqlite::{Connection, OptionalExtension, Row, params};
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, MutexGuard};
+
+const SCHEMA_VERSION: i64 = 1;
+
+#[derive(Clone)]
+pub struct Store {
+    conn: Arc<Mutex<Connection>>,
+}
+
+#[derive(Clone, Debug)]
+pub struct NewDownload {
+    pub package_id: Option<PackageId>,
+    pub url: String,
+    pub headers_json: Option<String>,
+    pub target_dir: PathBuf,
+    pub file_name: Option<String>,
+    pub priority: Priority,
+    pub connections: u32,
+    pub speed_limit: Option<u64>,
+}
+
+#[derive(Clone, Debug)]
+pub struct Download {
+    pub id: DownloadId,
+    pub package_id: Option<PackageId>,
+    pub url: String,
+    pub headers_json: Option<String>,
+    pub probe: Option<ProbeInfo>,
+    pub state: DownloadState,
+    pub priority: Priority,
+    pub position: i64,
+    pub connections: u32,
+    pub speed_limit: Option<u64>,
+    pub target_dir: PathBuf,
+    pub file_name: Option<String>,
+    pub target_path: Option<PathBuf>,
+    pub error: Option<String>,
+}
+
+const DOWNLOAD_COLS: &str = "id, package_id, url, headers_json, state, priority, position, connections, \
+    speed_limit, target_dir, file_name, target_path, error, final_url, size, etag, last_modified, \
+    resumable, probe_file_name, content_type";
+
+fn row_to_download(r: &Row) -> rusqlite::Result<Download> {
+    let final_url: Option<String> = r.get(13)?;
+    let probe = match final_url {
+        Some(final_url) => Some(ProbeInfo {
+            final_url,
+            size: r.get::<_, Option<i64>>(14)?.map(|v| v as u64),
+            etag: r.get(15)?,
+            last_modified: r.get(16)?,
+            resumable: r.get::<_, Option<bool>>(17)?.unwrap_or(false),
+            file_name: r.get::<_, Option<String>>(18)?.unwrap_or_default(),
+            content_type: r.get(19)?,
+        }),
+        None => None,
+    };
+    let state: String = r.get(4)?;
+    Ok(Download {
+        id: r.get(0)?,
+        package_id: r.get(1)?,
+        url: r.get(2)?,
+        headers_json: r.get(3)?,
+        probe,
+        state: DownloadState::parse(&state).unwrap_or(DownloadState::Failed),
+        priority: Priority::from_i64(r.get(5)?),
+        position: r.get(6)?,
+        connections: r.get::<_, i64>(7)? as u32,
+        speed_limit: r.get::<_, Option<i64>>(8)?.map(|v| v as u64),
+        target_dir: PathBuf::from(r.get::<_, String>(9)?),
+        file_name: r.get(10)?,
+        target_path: r.get::<_, Option<String>>(11)?.map(PathBuf::from),
+        error: r.get(12)?,
+    })
+}
+
+fn path_str(p: &Path) -> String {
+    p.to_string_lossy().into_owned()
+}
+
+impl Store {
+    pub fn open(path: &Path) -> Result<Store, EngineError> {
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
+        Self::init(Connection::open(path)?)
+    }
+
+    pub fn open_in_memory() -> Result<Store, EngineError> {
+        Self::init(Connection::open_in_memory()?)
+    }
+
+    fn init(conn: Connection) -> Result<Store, EngineError> {
+        conn.pragma_update(None, "journal_mode", "WAL")?;
+        conn.pragma_update(None, "foreign_keys", "ON")?;
+        conn.busy_timeout(std::time::Duration::from_secs(5))?;
+        let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
+        if version < 1 {
+            conn.execute_batch(&format!(
+                "BEGIN; {} PRAGMA user_version = {SCHEMA_VERSION}; COMMIT;",
+                include_str!("schema.sql")
+            ))?;
+        }
+        Ok(Store { conn: Arc::new(Mutex::new(conn)) })
+    }
+
+    fn lock(&self) -> MutexGuard<'_, Connection> {
+        self.conn.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    pub fn schema_version(&self) -> Result<i64, EngineError> {
+        Ok(self.lock().pragma_query_value(None, "user_version", |r| r.get(0))?)
+    }
+
+    pub fn create_package(&self, name: &str, source: &str) -> Result<PackageId, EngineError> {
+        let c = self.lock();
+        c.execute("INSERT INTO packages (name, source) VALUES (?1, ?2)", params![name, source])?;
+        Ok(c.last_insert_rowid())
+    }
+
+    pub fn insert_download(&self, d: &NewDownload) -> Result<DownloadId, EngineError> {
+        let c = self.lock();
+        c.execute(
+            "INSERT INTO downloads (package_id, url, headers_json, priority, position, connections, \
+             speed_limit, target_dir, file_name) \
+             VALUES (?1, ?2, ?3, ?4, (SELECT COALESCE(MAX(position), 0) + 1 FROM downloads), ?5, ?6, ?7, ?8)",
+            params![
+                d.package_id,
+                d.url,
+                d.headers_json,
+                d.priority.as_i64(),
+                d.connections.clamp(1, 32) as i64,
+                d.speed_limit.map(|v| v as i64),
+                path_str(&d.target_dir),
+                d.file_name,
+            ],
+        )?;
+        Ok(c.last_insert_rowid())
+    }
+
+    pub fn get_download(&self, id: DownloadId) -> Result<Download, EngineError> {
+        Ok(self.lock().query_row(
+            &format!("SELECT {DOWNLOAD_COLS} FROM downloads WHERE id = ?1"),
+            [id],
+            row_to_download,
+        )?)
+    }
+
+    /// All downloads, ordered by priority, position, id.
+    pub fn list_downloads(&self) -> Result<Vec<Download>, EngineError> {
+        let c = self.lock();
+        let mut st = c.prepare(&format!("SELECT {DOWNLOAD_COLS} FROM downloads ORDER BY priority, position, id"))?;
+        let rows = st.query_map([], row_to_download)?.collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    pub fn set_probe(&self, id: DownloadId, p: &ProbeInfo) -> Result<(), EngineError> {
+        self.lock().execute(
+            "UPDATE downloads SET final_url = ?2, size = ?3, etag = ?4, last_modified = ?5, resumable = ?6, \
+             probe_file_name = ?7, content_type = ?8 WHERE id = ?1",
+            params![
+                id,
+                p.final_url,
+                p.size.map(|v| v as i64),
+                p.etag,
+                p.last_modified,
+                p.resumable,
+                p.file_name,
+                p.content_type
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn set_state(&self, id: DownloadId, s: DownloadState, error: Option<&str>) -> Result<(), EngineError> {
+        self.lock().execute(
+            "UPDATE downloads SET state = ?2, error = ?3 WHERE id = ?1",
+            params![id, s.as_str(), error],
+        )?;
+        Ok(())
+    }
+
+    pub fn set_completed(&self, id: DownloadId, path: &Path) -> Result<(), EngineError> {
+        self.lock().execute(
+            "UPDATE downloads SET state = ?2, error = NULL, target_path = ?3 WHERE id = ?1",
+            params![id, DownloadState::Completed.as_str(), path_str(path)],
+        )?;
+        Ok(())
+    }
+
+    pub fn set_order(&self, id: DownloadId, p: Priority, position: i64) -> Result<(), EngineError> {
+        self.lock().execute(
+            "UPDATE downloads SET priority = ?2, position = ?3 WHERE id = ?1",
+            params![id, p.as_i64(), position],
+        )?;
+        Ok(())
+    }
+
+    /// Deletes the row; its segments go with it (foreign-key cascade).
+    pub fn delete_download(&self, id: DownloadId) -> Result<(), EngineError> {
+        self.lock().execute("DELETE FROM downloads WHERE id = ?1", [id])?;
+        Ok(())
+    }
+
+    /// Replaces all segments of `id` in one transaction.
+    pub fn save_segments(&self, id: DownloadId, ranges: &[Range]) -> Result<(), EngineError> {
+        let mut c = self.lock();
+        let tx = c.transaction()?;
+        tx.execute("DELETE FROM segments WHERE download_id = ?1", [id])?;
+        {
+            let mut st = tx.prepare("INSERT INTO segments (download_id, start, pos, \"end\") VALUES (?1, ?2, ?3, ?4)")?;
+            for r in ranges {
+                st.execute(params![id, r.start as i64, r.pos as i64, r.end as i64])?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn load_segments(&self, id: DownloadId) -> Result<Vec<Range>, EngineError> {
+        let c = self.lock();
+        let mut st = c.prepare("SELECT start, pos, \"end\" FROM segments WHERE download_id = ?1 ORDER BY start")?;
+        let rows = st
+            .query_map([id], |r| {
+                Ok(Range {
+                    start: r.get::<_, i64>(0)? as u64,
+                    pos: r.get::<_, i64>(1)? as u64,
+                    end: r.get::<_, i64>(2)? as u64,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    pub fn get_setting(&self, key: &str) -> Result<Option<serde_json::Value>, EngineError> {
+        let v: Option<String> = self
+            .lock()
+            .query_row("SELECT value FROM settings WHERE key = ?1", [key], |r| r.get(0))
+            .optional()?;
+        Ok(v.and_then(|s| serde_json::from_str(&s).ok()))
+    }
+
+    pub fn set_setting(&self, key: &str, v: &serde_json::Value) -> Result<(), EngineError> {
+        self.lock().execute(
+            "INSERT INTO settings (key, value) VALUES (?1, ?2) \
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            params![key, v.to_string()],
+        )?;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::{DownloadState, Priority, ProbeInfo};
+    use std::path::PathBuf;
+
+    fn nd(p: Priority) -> NewDownload {
+        NewDownload {
+            package_id: None,
+            url: "https://example.org/a.bin".into(),
+            headers_json: Some("{\"Cookie\":\"x=1\"}".into()),
+            target_dir: PathBuf::from(r"C:\dl"),
+            file_name: Some("a.bin".into()),
+            priority: p,
+            connections: 8,
+            speed_limit: Some(1000),
+        }
+    }
+
+    #[test]
+    fn insert_and_get_roundtrip() {
+        let s = Store::open_in_memory().unwrap();
+        let pkg = s.create_package("pkg", "manual").unwrap();
+        let mut n = nd(Priority::High);
+        n.package_id = Some(pkg);
+        let id = s.insert_download(&n).unwrap();
+        let probe = ProbeInfo {
+            final_url: "https://cdn.example.org/a.bin".into(),
+            size: Some(1234),
+            resumable: true,
+            file_name: "a.bin".into(),
+            etag: Some("\"e\"".into()),
+            last_modified: Some("Tue, 01 Jan 2030 00:00:00 GMT".into()),
+            content_type: Some("application/octet-stream".into()),
+        };
+        s.set_probe(id, &probe).unwrap();
+        let d = s.get_download(id).unwrap();
+        assert_eq!(d.id, id);
+        assert_eq!(d.package_id, Some(pkg));
+        assert_eq!(d.url, n.url);
+        assert_eq!(d.headers_json, n.headers_json);
+        assert_eq!(d.probe, Some(probe));
+        assert_eq!(d.state, DownloadState::Queued);
+        assert_eq!(d.priority, Priority::High);
+        assert_eq!(d.position, 1);
+        assert_eq!(d.connections, 8);
+        assert_eq!(d.speed_limit, Some(1000));
+        assert_eq!(d.target_dir, n.target_dir);
+        assert_eq!(d.file_name, n.file_name);
+        assert_eq!(d.target_path, None);
+        assert_eq!(d.error, None);
+        s.set_completed(id, std::path::Path::new(r"C:\dl\a.bin")).unwrap();
+        let d = s.get_download(id).unwrap();
+        assert_eq!(d.state, DownloadState::Completed);
+        assert_eq!(d.target_path, Some(PathBuf::from(r"C:\dl\a.bin")));
+    }
+
+    #[test]
+    fn positions_increment() {
+        let s = Store::open_in_memory().unwrap();
+        let ids: Vec<_> = (0..3).map(|_| s.insert_download(&nd(Priority::Normal)).unwrap()).collect();
+        let pos: Vec<_> = ids.iter().map(|i| s.get_download(*i).unwrap().position).collect();
+        assert_eq!(pos, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn list_orders_by_priority_then_position() {
+        let s = Store::open_in_memory().unwrap();
+        let a = s.insert_download(&nd(Priority::Normal)).unwrap();
+        let b = s.insert_download(&nd(Priority::Low)).unwrap();
+        let c = s.insert_download(&nd(Priority::High)).unwrap();
+        let d = s.insert_download(&nd(Priority::Normal)).unwrap();
+        let ids: Vec<_> = s.list_downloads().unwrap().into_iter().map(|x| x.id).collect();
+        assert_eq!(ids, vec![c, a, d, b]);
+        s.set_order(b, Priority::High, 0).unwrap();
+        let ids: Vec<_> = s.list_downloads().unwrap().into_iter().map(|x| x.id).collect();
+        assert_eq!(ids, vec![b, c, a, d]);
+    }
+
+    #[test]
+    fn segments_replace() {
+        let s = Store::open_in_memory().unwrap();
+        let id = s.insert_download(&nd(Priority::Normal)).unwrap();
+        let three = [
+            Range { start: 0, pos: 5, end: 10 },
+            Range { start: 10, pos: 10, end: 20 },
+            Range { start: 20, pos: 25, end: 30 },
+        ];
+        s.save_segments(id, &three).unwrap();
+        assert_eq!(s.load_segments(id).unwrap(), three.to_vec());
+        let two = [Range { start: 0, pos: 10, end: 10 }, Range { start: 10, pos: 12, end: 30 }];
+        s.save_segments(id, &two).unwrap();
+        assert_eq!(s.load_segments(id).unwrap(), two.to_vec());
+    }
+
+    #[test]
+    fn state_persists_across_reopen() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("haul.db");
+        let id = {
+            let s = Store::open(&path).unwrap();
+            let id = s.insert_download(&nd(Priority::Normal)).unwrap();
+            s.set_state(id, DownloadState::Paused, Some("x")).unwrap();
+            id
+        };
+        let s = Store::open(&path).unwrap();
+        let d = s.get_download(id).unwrap();
+        assert_eq!(d.state, DownloadState::Paused);
+        assert_eq!(d.error.as_deref(), Some("x"));
+    }
+
+    #[test]
+    fn schema_version_is_1() {
+        let s = Store::open_in_memory().unwrap();
+        assert_eq!(s.schema_version().unwrap(), 1);
+    }
+
+    #[test]
+    fn delete_cascades_segments() {
+        let s = Store::open_in_memory().unwrap();
+        let id = s.insert_download(&nd(Priority::Normal)).unwrap();
+        s.save_segments(id, &[Range { start: 0, pos: 0, end: 9 }]).unwrap();
+        s.delete_download(id).unwrap();
+        assert!(s.load_segments(id).unwrap().is_empty());
+        assert!(s.get_download(id).is_err());
+    }
+
+    #[test]
+    fn settings_roundtrip() {
+        let s = Store::open_in_memory().unwrap();
+        assert_eq!(s.get_setting("k").unwrap(), None);
+        s.set_setting("k", &serde_json::json!({"a": 1})).unwrap();
+        s.set_setting("k", &serde_json::json!(2)).unwrap();
+        assert_eq!(s.get_setting("k").unwrap(), Some(serde_json::json!(2)));
+    }
+}
