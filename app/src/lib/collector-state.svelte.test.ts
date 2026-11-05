@@ -113,3 +113,14 @@ test('chip_toggle_saves_through_the_backend', async () => {
   expect((await b.collectorSnapshot()).filters).toEqual(
     { html: true, images: true, small: true, duplicates: false, exts: ['csv'] });
 });
+
+test('double_start_calls_backend_once', async () => {
+  const { b, c, toasts } = setup();
+  await b.addLinks('https://a.org/1.bin https://a.org/2.bin', 'paste');
+  await vi.advanceTimersByTimeAsync(60);
+  await c.load();
+  const key = c.snapshot.packages[0].key;
+  await Promise.all([c.startPackage(key), c.startPackage(key), c.startSelected()]);
+  expect(b.calls.filter((x) => x === 'collectorStart')).toHaveLength(1);
+  expect(toasts.filter((t) => t.startsWith('Started'))).toEqual(['Started 2 downloads']);
+});

@@ -38,7 +38,7 @@
     }
     const items = c.items;
     if (e.key === 'Enter' && !e.ctrlKey && !e.altKey && tag !== 'INPUT' && tag !== 'TEXTAREA') {
-      if (selIndex < 0) return;
+      if (selIndex < 0 || e.repeat) return;
       e.preventDefault();
       void c.startSelected();
       return;

@@ -90,12 +90,19 @@ export function createCollectorState(
     hideWithUndo(ids, `Removed ${name}`);
   }
 
+  // One start at a time: a double click or a second Enter while the first is in flight does nothing.
+  let starting = false;
   async function start(ids: number[]) {
-    if (!ids.length) return;
-    const r = await backend.collectorStart(ids);
-    ui.showToast(`Started ${plural(r.started, 'download')}`);
-    await load();
-    ui.onStarted();
+    if (!ids.length || starting) return;
+    starting = true;
+    try {
+      const r = await backend.collectorStart(ids);
+      ui.showToast(`Started ${plural(r.started, 'download')}`);
+      await load();
+      ui.onStarted();
+    } finally {
+      starting = false;
+    }
   }
 
   const linksOf = (key: string) => snapshot.links.filter((l) => l.packageKey === key && !removed.has(l.id));
