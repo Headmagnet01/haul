@@ -1,21 +1,30 @@
 <script lang="ts">
   import Rail, { VIEWS, type View } from './components/Rail.svelte';
   import Placeholder from './components/Placeholder.svelte';
+  import QueueView from './components/QueueView.svelte';
+  import Toast from './components/Toast.svelte';
+  import { getBackend } from './lib/backend';
+  import { createAppState } from './lib/app-state.svelte';
+
+  const app = createAppState(getBackend());
+  void app.load();
 
   let view: View = $state('queue');
   const label = $derived(VIEWS.find((v) => v.id === view)?.label ?? '');
+  const active = $derived(app.snapshot.downloads.filter((d) => d.state !== 'completed' && !app.hidden.has(d.id)).length);
 </script>
 
 <div class="app" class:with-drawer={view === 'queue'}>
-  <Rail {view} onselect={(v) => (view = v)} />
+  <Rail {view} onselect={(v) => (view = v)} queueCount={active} />
   {#if view === 'queue'}
-    <Placeholder title="Queue" />
+    <QueueView {app} />
     <aside class="drawer" aria-label="Details"></aside>
   {:else}
     <Placeholder title={label} />
   {/if}
   <footer class="bar"></footer>
 </div>
+<Toast toast={app.toast} ondismiss={() => (app.toast = null)} />
 
 <style>
   .app {
