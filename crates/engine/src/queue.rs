@@ -1,0 +1,219 @@
+//! The download queue: starts queued downloads in priority order, up to a parallel limit.
+
+use crate::error::EngineError;
+use crate::naming::part_path;
+use crate::store::NewDownload;
+use crate::transfer::{TransferCtx, TransferJob, TransferOutcome, run_transfer};
+use crate::types::{DownloadId, DownloadState, Event, Priority};
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+use tokio::sync::Notify;
+use tokio_util::sync::CancellationToken;
+
+pub const MAX_PARALLEL: usize = 20;
+
+struct Running {
+    cancel: CancellationToken,
+    removing: bool,
+}
+
+struct Inner {
+    ctx: TransferCtx,
+    max_parallel: AtomicUsize,
+    running: Mutex<HashMap<DownloadId, Running>>,
+    wake: Notify,
+    stop: CancellationToken,
+    /// Something ran since the last AllDone.
+    ran: AtomicBool,
+}
+
+#[derive(Clone)]
+pub struct Queue {
+    inner: Arc<Inner>,
+}
+
+impl Queue {
+    /// Spawns the dispatcher. Rows left `Running` by a crash go back to `Queued`.
+    pub fn start(ctx: TransferCtx, max_parallel: usize) -> Queue {
+        if let Ok(rows) = ctx.store.list_downloads() {
+            for d in rows.into_iter().filter(|d| d.state == DownloadState::Running) {
+                let _ = ctx.store.set_state(d.id, DownloadState::Queued, None);
+            }
+        }
+        let q = Queue {
+            inner: Arc::new(Inner {
+                ctx,
+                max_parallel: AtomicUsize::new(max_parallel.clamp(1, MAX_PARALLEL)),
+                running: Mutex::new(HashMap::new()),
+                wake: Notify::new(),
+                stop: CancellationToken::new(),
+                ran: AtomicBool::new(false),
+            }),
+        };
+        let inner = q.inner.clone();
+        tokio::spawn(async move {
+            loop {
+                dispatch(&inner);
+                tokio::select! {
+                    _ = inner.stop.cancelled() => break,
+                    _ = inner.wake.notified() => {}
+                    _ = tokio::time::sleep(Duration::from_secs(1)) => {}
+                }
+            }
+        });
+        q
+    }
+
+    fn ctx(&self) -> &TransferCtx {
+        &self.inner.ctx
+    }
+
+    fn set_state(&self, id: DownloadId, state: DownloadState, error: Option<&str>) {
+        if self.ctx().store.set_state(id, state, error).is_ok() {
+            self.ctx().events.send(Event::StateChanged { id, state, error: error.map(str::to_string) });
+        }
+    }
+
+    pub fn add(&self, d: NewDownload) -> Result<DownloadId, EngineError> {
+        let id = self.ctx().store.insert_download(&d)?;
+        self.ctx().events.send(Event::StateChanged { id, state: DownloadState::Queued, error: None });
+        self.inner.wake.notify_one();
+        Ok(id)
+    }
+
+    pub fn pause(&self, id: DownloadId) {
+        if let Some(r) = self.inner.running.lock().unwrap().get(&id) {
+            r.cancel.cancel();
+            return;
+        }
+        if let Ok(d) = self.ctx().store.get_download(id) {
+            if d.state == DownloadState::Queued {
+                self.set_state(id, DownloadState::Paused, None);
+            }
+        }
+    }
+
+    /// Puts a paused or failed download back in the queue.
+    pub fn resume(&self, id: DownloadId) {
+        if self.inner.running.lock().unwrap().contains_key(&id) {
+            return;
+        }
+        if let Ok(d) = self.ctx().store.get_download(id) {
+            if !matches!(d.state, DownloadState::Queued | DownloadState::Running | DownloadState::Completed) {
+                self.set_state(id, DownloadState::Queued, None);
+                self.inner.wake.notify_one();
+            }
+        }
+    }
+
+    /// Stops it if running, then deletes the row and its part file. Finished files are never touched.
+    pub fn remove(&self, id: DownloadId) {
+        if let Some(r) = self.inner.running.lock().unwrap().get_mut(&id) {
+            r.removing = true;
+            r.cancel.cancel();
+            return;
+        }
+        delete_row_and_part(&self.inner.ctx, id);
+        self.inner.wake.notify_one();
+    }
+
+    pub fn set_priority(&self, id: DownloadId, p: Priority) {
+        if let Ok(d) = self.ctx().store.get_download(id) {
+            let _ = self.ctx().store.set_order(id, p, d.position);
+            self.inner.wake.notify_one();
+        }
+    }
+
+    pub fn move_to(&self, id: DownloadId, position: i64) {
+        if let Ok(d) = self.ctx().store.get_download(id) {
+            let _ = self.ctx().store.set_order(id, d.priority, position);
+            self.inner.wake.notify_one();
+        }
+    }
+
+    pub fn set_max_parallel(&self, n: usize) {
+        self.inner.max_parallel.store(n.clamp(1, MAX_PARALLEL), SeqCst);
+        self.inner.wake.notify_one();
+    }
+
+    pub fn max_parallel(&self) -> usize {
+        self.inner.max_parallel.load(SeqCst)
+    }
+
+    pub fn set_global_limit(&self, bps: Option<u64>) {
+        self.ctx().global_limit.set_rate(bps);
+    }
+
+    /// Pauses everything, saves, and stops the dispatcher. Used on app exit.
+    pub async fn shutdown(&self) {
+        self.inner.stop.cancel();
+        for r in self.inner.running.lock().unwrap().values() {
+            r.cancel.cancel();
+        }
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+        while !self.inner.running.lock().unwrap().is_empty() && tokio::time::Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }
+}
+
+fn delete_row_and_part(ctx: &TransferCtx, id: DownloadId) {
+    if let Ok(d) = ctx.store.get_download(id) {
+        if d.state != DownloadState::Completed {
+            if let Some(name) = &d.file_name {
+                let part = part_path(&d.target_dir, name, id);
+                if part.exists() {
+                    if let Err(e) = std::fs::remove_file(&part) {
+                        tracing::warn!(id, error = %e, "could not delete part file");
+                    }
+                }
+            }
+        }
+    }
+    let _ = ctx.store.delete_download(id);
+}
+
+/// Starts queued downloads while slots are free; emits AllDone once the queue drains.
+fn dispatch(inner: &Arc<Inner>) {
+    if inner.stop.is_cancelled() {
+        return;
+    }
+    let Ok(rows) = inner.ctx.store.list_downloads() else { return };
+    let max = inner.max_parallel.load(SeqCst);
+    let mut running = inner.running.lock().unwrap();
+    for d in rows.iter().filter(|d| d.state == DownloadState::Queued) {
+        if running.len() >= max {
+            break;
+        }
+        if running.contains_key(&d.id) {
+            continue;
+        }
+        let cancel = CancellationToken::new();
+        running.insert(d.id, Running { cancel: cancel.clone(), removing: false });
+        inner.ran.store(true, SeqCst);
+        let inner2 = inner.clone();
+        let id = d.id;
+        tokio::spawn(async move {
+            let out = run_transfer(TransferJob { id, cancel }, &inner2.ctx).await;
+            let removing = inner2.running.lock().unwrap().remove(&id).is_some_and(|r| r.removing);
+            if removing {
+                delete_row_and_part(&inner2.ctx, id);
+            } else if let TransferOutcome::Failed(EngineError::DiskFull) = out {
+                let _ = inner2.ctx.store.set_state(id, DownloadState::Paused, Some("Disk full"));
+                inner2.ctx.events.send(Event::StateChanged {
+                    id,
+                    state: DownloadState::Paused,
+                    error: Some("Disk full".into()),
+                });
+            }
+            inner2.wake.notify_one();
+        });
+    }
+    let busy = !running.is_empty()
+        || rows.iter().any(|d| d.state == DownloadState::Queued || d.state == DownloadState::Running);
+    if !busy && inner.ran.swap(false, SeqCst) {
+        inner.ctx.events.send(Event::AllDone);
+    }
+}
