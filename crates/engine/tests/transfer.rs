@@ -223,3 +223,147 @@ async fn progress_events_throttled() {
         assert!(in_window <= 5, "{in_window} progress events within 1 s");
     }
 }
+
+// ---- Task 7: robustness ----
+
+fn steal_count(rx: &mut tokio::sync::broadcast::Receiver<Event>) -> usize {
+    let mut n = 0;
+    while let Ok(ev) = rx.try_recv() {
+        if matches!(ev, Event::Steal { .. }) {
+            n += 1;
+        }
+    }
+    n
+}
+
+#[tokio::test]
+async fn steal_happens() {
+    let len = 24 * MIB as usize;
+    let mut spec = Spec::new(len);
+    spec.slow_from = Some((18 * MIB, 1_000_000));
+    let srv = serve(spec).await;
+    let dir = tempfile::tempdir().unwrap();
+    let c = ctx(16, TransferConfig::for_tests());
+    let mut rx = c.events.subscribe();
+    let id = add(&c, &srv.url, dir.path(), 4, None);
+    let p = completed(run(&c, id).await);
+    assert_file_eq(&p, len);
+    assert!(steal_count(&mut rx) >= 1, "no steal happened");
+}
+
+#[tokio::test]
+async fn slow_connection_replaced() {
+    let len = 24 * MIB as usize;
+    let mut spec = Spec::new(len);
+    spec.bytes_per_sec = Some(8_000_000);
+    spec.slow_from = Some((18 * MIB, 1_000_000));
+    let srv = serve(spec).await;
+    let dir = tempfile::tempdir().unwrap();
+    let c = ctx(16, TransferConfig::for_tests());
+    let id = add(&c, &srv.url, dir.path(), 4, None);
+    let requests = srv.requests.clone();
+    // Before the fast ranges finish (~0.8 s) no steal can happen, so any request
+    // beyond HEAD + 4 ranges is a slow connection being reopened.
+    let early = tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(650)).await;
+        requests.load(SeqCst)
+    });
+    let p = completed(run(&c, id).await);
+    assert_file_eq(&p, len);
+    let at_650ms = early.await.unwrap();
+    assert!(at_650ms > 5, "only {at_650ms} requests by 650 ms: slow connection not replaced");
+}
+
+#[tokio::test]
+async fn dropped_connection_retried() {
+    let len = 6 * MIB as usize;
+    let mut spec = Spec::new(len);
+    spec.drop_after = Some(300_000);
+    let srv = serve(spec).await;
+    let dir = tempfile::tempdir().unwrap();
+    let c = ctx(16, TransferConfig::for_tests());
+    let id = add(&c, &srv.url, dir.path(), 8, None);
+    let p = completed(run(&c, id).await);
+    assert_file_eq(&p, len);
+    // HEAD + the dropped request + at least one retry
+    assert!(srv.requests.load(SeqCst) >= 3);
+}
+
+#[tokio::test]
+async fn retries_exhausted_fails() {
+    let mut spec = Spec::new(1000);
+    spec.status = Some(503);
+    let srv = serve(spec).await;
+    let dir = tempfile::tempdir().unwrap();
+    let cfg = TransferConfig::for_tests();
+    let max = cfg.max_attempts;
+    let c = ctx(16, cfg);
+    let id = add(&c, &srv.url, dir.path(), 4, None);
+    match run(&c, id).await {
+        TransferOutcome::Failed(EngineError::Http(503)) => {}
+        other => panic!("expected Http(503), got {other:?}"),
+    }
+    assert!(srv.requests.load(SeqCst) >= max, "gave up after {} requests", srv.requests.load(SeqCst));
+    assert_eq!(c.store.get_download(id).unwrap().state, haul_engine::DownloadState::Failed);
+}
+
+#[tokio::test]
+async fn expired_mid_download() {
+    let len = 20 * MIB as usize;
+    let mut spec = Spec::new(len);
+    spec.bytes_per_sec = Some(4_000_000);
+    spec.drop_after = Some(2 * MIB); // forces fresh requests mid-download
+    let srv = serve(spec).await;
+    let dir = tempfile::tempdir().unwrap();
+    let c = ctx(16, TransferConfig::for_tests());
+    let id = add(&c, &srv.url, dir.path(), 4, None);
+    let mut rx = c.events.subscribe();
+    let spec_handle = srv.spec.clone();
+    tokio::spawn(async move {
+        while let Ok(ev) = rx.recv().await {
+            if let Event::Progress { written, .. } = ev {
+                if written >= 5 * MIB {
+                    spec_handle.lock().unwrap().status = Some(403);
+                    break;
+                }
+            }
+        }
+    });
+    match run(&c, id).await {
+        TransferOutcome::Failed(EngineError::LinkExpired(403)) => {}
+        other => panic!("expected LinkExpired(403), got {other:?}"),
+    }
+    assert_eq!(c.store.get_download(id).unwrap().state, haul_engine::DownloadState::LinkExpired);
+    let saved: u64 = c.store.load_segments(id).unwrap().iter().map(|r| r.pos - r.start).sum();
+    assert!(saved > 0, "no progress saved");
+}
+
+#[tokio::test]
+async fn range_ignored_mid_download_falls_back() {
+    let len = 16 * MIB as usize;
+    let mut spec = Spec::new(len);
+    spec.ignore_range_after_requests = Some(2);
+    let srv = serve(spec).await;
+    let dir = tempfile::tempdir().unwrap();
+    let c = ctx(16, TransferConfig::for_tests());
+    let id = add(&c, &srv.url, dir.path(), 8, None);
+    let p = completed(run(&c, id).await);
+    assert_file_eq(&p, len);
+    assert!(part_files(dir.path()).is_empty());
+}
+
+#[tokio::test]
+async fn range_not_satisfiable_fails_after_one_restart() {
+    let mut spec = Spec::new(8 * MIB as usize);
+    spec.range_status = Some(416);
+    let srv = serve(spec).await;
+    let dir = tempfile::tempdir().unwrap();
+    let c = ctx(16, TransferConfig::for_tests());
+    let id = add(&c, &srv.url, dir.path(), 2, None);
+    match run(&c, id).await {
+        TransferOutcome::Failed(EngineError::RangeNotSatisfiable) => {}
+        other => panic!("expected RangeNotSatisfiable, got {other:?}"),
+    }
+    // probe + first pass, then a fresh probe + second pass
+    assert!(srv.requests.load(SeqCst) >= 4, "{} requests: no restart", srv.requests.load(SeqCst));
+}

@@ -58,6 +58,8 @@ pub struct Spec {
     pub no_length: bool,
     /// This path answers 302 -> /file.
     pub redirect_from: Option<String>,
+    /// Answer every ranged GET with this status instead.
+    pub range_status: Option<u16>,
 }
 
 impl Spec {
@@ -190,6 +192,9 @@ async fn handle(State(s): State<Arc<Srv>>, method: Method, headers: HeaderMap) -
     let mut range = None;
     if spec.ranges && !is_head {
         if let Some(v) = headers.get(header::RANGE).and_then(|v| v.to_str().ok()) {
+            if let Some(code) = spec.range_status {
+                return StatusCode::from_u16(code).unwrap().into_response();
+            }
             let ignore = spec.ignore_range_after_requests.is_some_and(|k| n > k);
             if !ignore {
                 match parse_range(v, len) {

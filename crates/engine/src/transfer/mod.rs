@@ -185,6 +185,20 @@ fn free_space(ctx: &TransferCtx, dir: &Path) -> Result<u64, EngineError> {
     }
 }
 
+/// Why saved progress can't be trusted against a fresh probe, checked in the
+/// spec's order: ETag, then Last-Modified, then size.
+fn fingerprint_mismatch(old: &ProbeInfo, new: &ProbeInfo) -> Option<&'static str> {
+    if old.etag != new.etag {
+        Some("etag changed")
+    } else if old.last_modified != new.last_modified {
+        Some("last-modified changed")
+    } else if old.size != new.size {
+        Some("size changed")
+    } else {
+        None
+    }
+}
+
 /// Returns Ok(Some(path)) when complete, Ok(None) when paused.
 async fn transfer(job: &TransferJob, ctx: &TransferCtx) -> Result<Option<PathBuf>, EngineError> {
     let id = job.id;
@@ -195,94 +209,133 @@ async fn transfer(job: &TransferJob, ctx: &TransferCtx) -> Result<Option<PathBuf
         .and_then(|u| u.host_str().map(str::to_string))
         .unwrap_or_default();
 
-    let fresh = probe_with_retry(ctx, &d.url, &headers, &job.cancel).await?;
-    let file_name = match &d.file_name {
-        Some(n) => sanitize_filename(n),
-        None => {
-            ctx.store.set_file_name(id, &fresh.file_name)?;
-            fresh.file_name.clone()
-        }
-    };
-    ctx.store.set_probe(id, &fresh)?;
+    let mut old_probe = d.probe.clone();
+    let mut file_name = d.file_name.as_deref().map(sanitize_filename);
+    let mut allow_resume = true;
+    let mut force_sequential = false;
+    let mut restarted_416 = false;
 
-    std::fs::create_dir_all(&d.target_dir)?;
-    let part = part_path(&d.target_dir, &file_name, id);
-    let size = fresh.size;
-    let resumable = fresh.resumable && size.is_some();
-
-    let ranges = match size {
-        Some(s) if resumable => initial_plan(s, d.connections),
-        _ => vec![Range { start: 0, pos: 0, end: size.unwrap_or(u64::MAX) }],
-    };
-    let written: u64 = ranges.iter().map(|r| r.pos - r.start).sum();
-    if let Some(s) = size {
-        if s - written > free_space(ctx, &d.target_dir)? {
-            return Err(EngineError::DiskFull);
-        }
-    }
-
-    let file = std::fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .open(&part)?;
-    if let Some(s) = size {
-        file.set_len(s).map_err(io_error)?;
-    }
-    let file = Arc::new(file);
-
-    let conns = if resumable { (d.connections.clamp(1, 32) as usize).min(ranges.len()) } else { 1 };
-    let env = Arc::new(Env {
-        id,
-        client: ctx.client.clone(),
-        url: d.url.clone(),
-        host,
-        headers,
-        file: file.clone(),
-        table: Arc::new(Mutex::new(SegTable::new(ranges))),
-        global: ctx.global_limit.clone(),
-        local: Arc::new(RateLimiter::new(d.speed_limit)),
-        hosts: ctx.hosts.clone(),
-        events: ctx.events.clone(),
-        config: ctx.config.clone(),
-        resumable,
-        cancel: job.cancel.child_token(),
-        received: Arc::new(AtomicU64::new(0)),
-        live: Arc::new(Mutex::new(HashMap::new())),
-        next_live: AtomicU64::new(0),
-    });
-
-    let end = run_pass(ctx, &env, conns, size).await;
-    let final_ranges = env.table.lock().unwrap().ranges();
-    let total_written: u64 = final_ranges.iter().map(|r| r.pos - r.start).sum();
-    drop(env);
-
-    match end {
-        PassEnd::Complete => {
-            if size.is_none() {
-                file.set_len(total_written).map_err(io_error)?;
+    loop {
+        let fresh = probe_with_retry(ctx, &d.url, &headers, &job.cancel).await?;
+        let name = match &file_name {
+            Some(n) => n.clone(),
+            None => {
+                ctx.store.set_file_name(id, &fresh.file_name)?;
+                file_name = Some(fresh.file_name.clone());
+                fresh.file_name.clone()
             }
-            file.sync_all().map_err(io_error)?;
-            drop(file);
-            let target = reserve_unique_path(&d.target_dir, &file_name)?;
-            if let Err(e) = std::fs::rename(&part, &target) {
-                let _ = std::fs::remove_file(&target);
-                return Err(EngineError::Io(e));
+        };
+        ctx.store.set_probe(id, &fresh)?;
+
+        std::fs::create_dir_all(&d.target_dir)?;
+        let part = part_path(&d.target_dir, &name, id);
+        let size = fresh.size;
+        let resumable = fresh.resumable && size.is_some() && !force_sequential;
+
+        let saved = ctx.store.load_segments(id)?;
+        let resume = allow_resume && resumable && !saved.is_empty() && {
+            let why = if !part.exists() {
+                Some("part file missing")
+            } else if !state::ranges_valid(&saved, size.unwrap_or(0)) {
+                Some("saved ranges invalid")
+            } else {
+                old_probe.as_ref().map_or(Some("no stored probe"), |old| fingerprint_mismatch(old, &fresh))
+            };
+            if let Some(why) = why {
+                tracing::info!(id, why, "restarting from zero");
             }
-            ctx.store.set_completed(id, &target)?;
-            ctx.store.save_segments(id, &[])?;
-            Ok(Some(target))
+            why.is_none()
+        };
+        old_probe = Some(fresh.clone());
+
+        let ranges = match size {
+            _ if resume => saved,
+            Some(s) if resumable => initial_plan(s, d.connections),
+            _ => vec![Range { start: 0, pos: 0, end: size.unwrap_or(u64::MAX) }],
+        };
+        let written: u64 = ranges.iter().map(|r| r.pos - r.start).sum();
+        if let Some(s) = size {
+            if s - written.min(s) > free_space(ctx, &d.target_dir)? {
+                return Err(EngineError::DiskFull);
+            }
         }
-        PassEnd::Cancelled => {
-            file.sync_all().map_err(io_error)?;
-            ctx.store.save_segments(id, &final_ranges)?;
-            Ok(None)
+
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(!resume)
+            .open(&part)?;
+        if let Some(s) = size {
+            file.set_len(s).map_err(io_error)?;
         }
-        PassEnd::Failed(e) => {
-            let _ = file.sync_all();
-            ctx.store.save_segments(id, &final_ranges)?;
-            Err(e)
+        let file = Arc::new(file);
+
+        let unfinished = ranges.iter().filter(|r| !r.is_done()).count().max(1);
+        let conns = if resumable { (d.connections.clamp(1, 32) as usize).min(unfinished) } else { 1 };
+        let env = Arc::new(Env {
+            id,
+            client: ctx.client.clone(),
+            url: d.url.clone(),
+            host: host.clone(),
+            headers: headers.clone(),
+            file: file.clone(),
+            table: Arc::new(Mutex::new(SegTable::new(ranges))),
+            global: ctx.global_limit.clone(),
+            local: Arc::new(RateLimiter::new(d.speed_limit)),
+            hosts: ctx.hosts.clone(),
+            events: ctx.events.clone(),
+            config: ctx.config.clone(),
+            resumable,
+            cancel: job.cancel.child_token(),
+            received: Arc::new(AtomicU64::new(0)),
+            live: Arc::new(Mutex::new(HashMap::new())),
+            next_live: AtomicU64::new(0),
+        });
+
+        let end = run_pass(ctx, &env, conns, size).await;
+        let final_ranges = env.table.lock().unwrap().ranges();
+        let total_written: u64 = final_ranges.iter().map(|r| r.pos - r.start).sum();
+        drop(env);
+
+        match end {
+            PassEnd::Complete => {
+                if size.is_none() {
+                    file.set_len(total_written).map_err(io_error)?;
+                }
+                file.sync_all().map_err(io_error)?;
+                drop(file);
+                let target = reserve_unique_path(&d.target_dir, &name)?;
+                if let Err(e) = std::fs::rename(&part, &target) {
+                    let _ = std::fs::remove_file(&target);
+                    return Err(EngineError::Io(e));
+                }
+                ctx.store.set_completed(id, &target)?;
+                ctx.store.save_segments(id, &[])?;
+                return Ok(Some(target));
+            }
+            PassEnd::Cancelled => {
+                file.sync_all().map_err(io_error)?;
+                ctx.store.save_segments(id, if resumable { &final_ranges } else { &[] })?;
+                return Ok(None);
+            }
+            PassEnd::RangeIgnored => {
+                tracing::info!(id, "server ignored a range request; one connection from zero");
+                force_sequential = true;
+                allow_resume = false;
+                ctx.store.save_segments(id, &[])?;
+            }
+            PassEnd::Failed(EngineError::RangeNotSatisfiable) if !restarted_416 => {
+                tracing::info!(id, "416; restarting from zero once");
+                restarted_416 = true;
+                allow_resume = false;
+                ctx.store.save_segments(id, &[])?;
+            }
+            PassEnd::Failed(e) => {
+                let _ = file.sync_all();
+                ctx.store.save_segments(id, if resumable { &final_ranges } else { &[] })?;
+                return Err(e);
+            }
         }
     }
 }
@@ -290,6 +343,7 @@ async fn transfer(job: &TransferJob, ctx: &TransferCtx) -> Result<Option<PathBuf
 enum PassEnd {
     Complete,
     Cancelled,
+    RangeIgnored,
     Failed(EngineError),
 }
 
@@ -308,6 +362,7 @@ async fn run_pass(ctx: &TransferCtx, env: &Arc<Env>, conns: usize, size: Option<
     let mut last_progress: Option<Instant> = None;
     let mut speed_samples: VecDeque<(Instant, u64)> = VecDeque::new();
     let mut first_err: Option<ConnExit> = None;
+    let mut slow_hist: HashMap<u64, VecDeque<(Instant, u64)>> = HashMap::new();
 
     loop {
         tokio::select! {
@@ -335,6 +390,9 @@ async fn run_pass(ctx: &TransferCtx, env: &Arc<Env>, conns: usize, size: Option<
                         tracing::warn!(id = env.id, error = %e, "saving segments failed");
                     }
                 }
+                if env.resumable {
+                    kill_slow_connections(env, cfg, &mut slow_hist);
+                }
                 if last_progress.is_none_or(|t| t.elapsed() >= cfg.progress_interval) {
                     last_progress = Some(Instant::now());
                     emit_progress(env, size, &mut speed_samples);
@@ -345,12 +403,46 @@ async fn run_pass(ctx: &TransferCtx, env: &Arc<Env>, conns: usize, size: Option<
 
     match first_err {
         Some(ConnExit::Fatal(e)) => PassEnd::Failed(e),
-        Some(ConnExit::RangeIgnored) => {
-            PassEnd::Failed(EngineError::Network("server ignored the range request".into()))
-        }
+        Some(ConnExit::RangeIgnored) => PassEnd::RangeIgnored,
         None if env.cancel.is_cancelled() => PassEnd::Cancelled,
         None if env.table.lock().unwrap().all_done() => PassEnd::Complete,
         None => PassEnd::Failed(EngineError::Network("connections stopped before the end".into())),
+    }
+}
+
+/// Measures each live response over `slow_window` and cancels the ones running below
+/// `slow_ratio` x the median. Their ranges stay in the table for a fresh connection.
+fn kill_slow_connections(env: &Env, cfg: &TransferConfig, hist: &mut HashMap<u64, VecDeque<(Instant, u64)>>) {
+    let now = Instant::now();
+    let window = cfg.slow_window;
+    let live = env.live.lock().unwrap();
+    hist.retain(|k, _| live.contains_key(k));
+    let mut speeds: Vec<(u64, f64)> = Vec::new();
+    for (&k, l) in live.iter() {
+        let h = hist.entry(k).or_default();
+        h.push_back((now, l.received.load(Relaxed)));
+        while h.len() > 2 && now.duration_since(h[1].0) >= window {
+            h.pop_front();
+        }
+        let (t0, b0) = h[0];
+        let (t1, b1) = *h.back().unwrap();
+        let dt = t1.duration_since(t0);
+        if now.duration_since(l.since) >= window && dt >= window.mul_f64(0.9) {
+            speeds.push((k, (b1 - b0) as f64 / dt.as_secs_f64()));
+        }
+    }
+    if speeds.len() < 2 {
+        return;
+    }
+    let mut sorted: Vec<f64> = speeds.iter().map(|s| s.1).collect();
+    sorted.sort_by(f64::total_cmp);
+    let median = sorted[sorted.len() / 2];
+    for (k, bps) in speeds {
+        if crate::segmenter::is_slow(bps, median, cfg.slow_ratio) {
+            tracing::debug!(id = env.id, bps, median, "replacing slow connection");
+            live[&k].kill.cancel();
+            hist.remove(&k);
+        }
     }
 }
 
