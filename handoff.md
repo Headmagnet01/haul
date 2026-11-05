@@ -16,7 +16,7 @@ A free, open-source Windows download manager. It pairs IDM's fast engine and bro
 | Done | Plan 1, the engine core: `docs/superpowers/plans/2026-11-05-haul-plan-1-engine-core.md`, Tasks 0–10. |
 | Tests | 87 tests, green 6 runs in a row after the review fixes. `cargo clippy -- -D warnings` is clean. |
 | Real-world check | 100 MB from `sin-speed.hetzner.com`: correct SHA-256, resumed after a hard kill, never overwrote an existing file. |
-| Next | Plan 2: the Tauri shell + Queue UI. It hasn't been written yet; start it with superpowers:writing-plans from spec sections 5–6. |
+| Next | Plan 2 (Tauri shell + Queue UI) is written: `docs/superpowers/plans/2026-11-05-haul-plan-2-shell-queue-ui.md`, from spec section 7 and milestone 3. Not started. |
 
 ## How to build and test
 The toolchain is already installed on this PC:
