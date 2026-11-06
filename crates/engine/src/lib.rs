@@ -8,6 +8,7 @@ pub mod naming;
 pub mod probe;
 pub mod queue;
 pub mod ratelimit;
+pub mod rules;
 pub mod schedule;
 pub mod secret;
 pub mod segmenter;

@@ -8,7 +8,9 @@ bytes = "1.12.1"
 chrono = { version = "0.4.45", features = ["serde"] }
 fs4 = "1.1.0"
 futures = "0.3.34"
+globset = "0.4.21"
 percent-encoding = "2.3.2"
+regex = "1.13.1"
 reqwest = { version = "0.13.5", default-features = false, features = ["rustls-no-provider", "stream", "http2"] }
 rusqlite = { version = "0.41.1", features = ["bundled"] }
 rustls = { version = "0.23.46", default-features = false, features = ["ring", "std", "tls12"] }
