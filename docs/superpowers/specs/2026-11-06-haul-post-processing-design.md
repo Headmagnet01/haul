@@ -50,7 +50,7 @@ A Windows notification "‹package› is ready" (or "‹package› needs attenti
   - `downloads` gains `expected_hash`, `server_digest` and `verify_retries`.
   - `passwords` (id, position, blob), the blob being DPAPI-encrypted for the current Windows user.
   - `rules` (id, position, enabled, match_json, action_json).
-- Settings keys: `postproc_auto` (true), `sort_categories` (true), `recycle_archives` (false), `virus_scan` (false), `categories` (the six defaults until edited).
+- Settings keys: `postproc` = `{"auto":true,"sortCategories":true,"recycleArchives":false,"virusScan":false}`, and `categories` (the six defaults until edited).
 
 ## Code layout
 - `crates/engine/src/rules.rs`: pure. Categories, rule matching, rename patterns, `decide(file, rules, categories) -> Destination`.
