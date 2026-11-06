@@ -1,17 +1,24 @@
 //! App commands as plain methods on `AppCore`, so they test without Tauri.
 
-use crate::dto::{AddResult, DownloadView, PackageView, Snapshot, SpeedLimit};
+use crate::dto::{
+    CollectorFilters, CollectorSnapshot, DownloadView, IntakeResult, PackageView, Snapshot, SpeedLimit, StartResult,
+};
 use haul_engine::{
-    Download, DownloadState, EngineError, EventBus, HostLimiter, NewDownload, Priority, Queue, RateLimiter, Schedule,
-    Store, TransferConfig, TransferCtx, extract_links, naming,
+    Download, DownloadState, EngineError, EventBus, Grabber, HostLimiter, Priority, ProbeFn, Queue, RateLimiter,
+    Schedule, StartDefaults, Store, TransferConfig, TransferCtx, extract_links, http_prober, naming,
 };
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 pub const KEY_SPEED_LIMIT: &str = "speed_limit";
 pub const KEY_DOWNLOAD_DIR: &str = "download_dir";
 pub const KEY_MAX_PARALLEL: &str = "max_parallel";
+pub const KEY_WATCH_CLIPBOARD: &str = "watch_clipboard";
+pub const KEY_COLLECTOR_FILTERS: &str = "collector_filters";
+/// Where a link may come from; the browser joins in plan 5.
+const SOURCES: [&str; 3] = ["clipboard", "paste", "drop"];
 const DEFAULT_MAX_PARALLEL: usize = 3;
 const DEFAULT_CONNECTIONS: u32 = 8;
 
@@ -27,6 +34,8 @@ pub struct AppCore {
     store: Store,
     ctx: TransferCtx,
     queue: Queue,
+    grabber: Grabber,
+    clipboard_on: Arc<AtomicBool>,
     download_dir: PathBuf,
 }
 
@@ -38,12 +47,32 @@ fn priority_str(p: Priority) -> &'static str {
     }
 }
 
+fn invalid(msg: &str) -> EngineError {
+    EngineError::Io(std::io::Error::new(std::io::ErrorKind::InvalidInput, msg.to_string()))
+}
+
+fn json<T: serde::Serialize>(v: &T) -> Result<serde_json::Value, EngineError> {
+    serde_json::to_value(v).map_err(|e| EngineError::Io(std::io::Error::other(e)))
+}
+
+/// Lowercase, no leading dot, no blanks or repeats.
+fn normalise_exts(exts: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for e in exts {
+        let e = e.trim().trim_start_matches('.').to_lowercase();
+        if !e.is_empty() && !out.contains(&e) {
+            out.push(e);
+        }
+    }
+    out
+}
+
 fn parse_priority(s: &str) -> Result<Priority, EngineError> {
     match s {
         "high" => Ok(Priority::High),
         "normal" => Ok(Priority::Normal),
         "low" => Ok(Priority::Low),
-        _ => Err(EngineError::Io(std::io::Error::new(std::io::ErrorKind::InvalidInput, "unknown priority"))),
+        _ => Err(invalid("unknown priority")),
     }
 }
 
@@ -74,6 +103,17 @@ impl AppCore {
 
     /// `schedule` lets tests keep the queue from ever starting a download.
     pub fn start_with(store: Store, default_download_dir: PathBuf, schedule: Option<Schedule>) -> AppCore {
+        let prober = http_prober(haul_engine::http_client());
+        Self::start_full(store, default_download_dir, schedule, prober)
+    }
+
+    /// Like `start_with`, with the Collector's link checker injected (tests check links without a network).
+    pub fn start_full(
+        store: Store,
+        default_download_dir: PathBuf,
+        schedule: Option<Schedule>,
+        prober: ProbeFn,
+    ) -> AppCore {
         let limit: SpeedLimit = store
             .get_setting(KEY_SPEED_LIMIT)
             .ok()
@@ -104,7 +144,9 @@ impl AppCore {
         if schedule.is_some() {
             queue.set_schedule(schedule);
         }
-        AppCore { store, ctx, queue, download_dir }
+        let grabber = Grabber::new(store.clone(), ctx.events.clone(), prober);
+        let watch = store.get_setting(KEY_WATCH_CLIPBOARD).ok().flatten().and_then(|v| v.as_bool()).unwrap_or(false);
+        AppCore { store, ctx, queue, grabber, clipboard_on: Arc::new(AtomicBool::new(watch)), download_dir }
     }
 
     pub fn events(&self) -> EventBus {
@@ -167,31 +209,63 @@ impl AppCore {
         Ok(Snapshot { packages, downloads, speed_limit: self.speed_limit() })
     }
 
-    /// Queues every link in `text`. Two or more links share a new "Pasted list" package.
-    pub fn add_links(&self, text: &str) -> Result<AddResult, EngineError> {
+    /// Sends every link in `text` to the Collector.
+    pub fn add_links(&self, text: &str, source: &str) -> Result<IntakeResult, EngineError> {
+        if !SOURCES.contains(&source) {
+            return Err(invalid("unknown link source"));
+        }
         let links = extract_links(text);
         if links.is_empty() {
-            return Ok(AddResult { added: 0, package_id: None });
+            return Ok(IntakeResult { added: 0, skipped: 0 });
         }
-        let package_id = if links.len() >= 2 {
-            let name = format!("Pasted list · {}", chrono::Local::now().format("%-d %b %H:%M"));
-            Some(self.store.create_package(&name, "paste")?)
-        } else {
-            None
-        };
-        for url in &links {
-            self.queue.add(NewDownload {
-                package_id,
-                url: url.clone(),
-                headers_json: None,
-                target_dir: self.download_dir.clone(),
-                file_name: None,
-                priority: Priority::Normal,
-                connections: DEFAULT_CONNECTIONS,
-                speed_limit: None,
-            })?;
-        }
-        Ok(AddResult { added: links.len(), package_id })
+        self.grabber.intake(links, source)
+    }
+
+    fn collector_filters(&self) -> CollectorFilters {
+        self.store
+            .get_setting(KEY_COLLECTOR_FILTERS)
+            .ok()
+            .flatten()
+            .and_then(|v| serde_json::from_value(v).ok())
+            .unwrap_or_default()
+    }
+
+    pub fn collector_snapshot(&self) -> Result<CollectorSnapshot, EngineError> {
+        let s = self.grabber.state()?;
+        Ok(CollectorSnapshot {
+            packages: s.packages,
+            links: s.links,
+            filters: self.collector_filters(),
+            watch_clipboard: self.watch_clipboard(),
+        })
+    }
+
+    pub fn collector_start(&self, ids: &[i64]) -> Result<StartResult, EngineError> {
+        let d = StartDefaults { target_dir: self.download_dir.clone(), connections: DEFAULT_CONNECTIONS };
+        Ok(StartResult { started: self.grabber.start(ids, &self.queue, &d)? })
+    }
+
+    pub fn collector_remove(&self, ids: &[i64]) -> Result<(), EngineError> {
+        self.grabber.remove(ids)
+    }
+
+    pub fn collector_recheck(&self, ids: &[i64]) -> Result<(), EngineError> {
+        self.grabber.recheck(ids)
+    }
+
+    pub fn set_collector_filters(&self, f: CollectorFilters) -> Result<(), EngineError> {
+        let f = CollectorFilters { exts: normalise_exts(&f.exts), ..f };
+        self.store.set_setting(KEY_COLLECTOR_FILTERS, &json(&f)?)
+    }
+
+    pub fn set_watch_clipboard(&self, on: bool) -> Result<(), EngineError> {
+        self.store.set_setting(KEY_WATCH_CLIPBOARD, &serde_json::Value::Bool(on))?;
+        self.clipboard_on.store(on, Ordering::Relaxed);
+        Ok(())
+    }
+
+    pub fn watch_clipboard(&self) -> bool {
+        self.clipboard_on.load(Ordering::Relaxed)
     }
 
     pub fn pause(&self, ids: &[i64]) {
@@ -260,51 +334,143 @@ mod tests {
         AppCore::start_with(store, dir.to_path_buf(), never())
     }
 
-    #[tokio::test]
-    async fn add_one_link_no_package() {
-        let dir = tempfile::tempdir().unwrap();
-        let c = core(Store::open_in_memory().unwrap(), dir.path());
-        let r = c.add_links("x https://a.org/f.bin y").unwrap();
-        assert_eq!(r.added, 1);
-        assert_eq!(r.package_id, None);
-        let s = c.snapshot().unwrap();
-        assert_eq!(s.downloads.len(), 1);
-        let d = &s.downloads[0];
-        assert_eq!(d.name, "f.bin");
-        assert_eq!(d.state, "queued");
-        assert_eq!(d.priority, "normal");
-        assert_eq!(d.host, "a.org");
-        assert!(d.segments.is_empty());
-        assert_eq!(d.written, 0);
-        assert_eq!(d.connections, 8);
-        assert_eq!(d.target_dir, dir.path().to_string_lossy());
-        assert!(s.packages.is_empty());
+    /// Queues `https://a.org/f.bin` without the Collector.
+    fn queue_one(c: &AppCore) {
+        c.queue
+            .add(haul_engine::NewDownload {
+                package_id: None,
+                url: "https://a.org/f.bin".into(),
+                headers_json: None,
+                target_dir: c.download_dir.clone(),
+                file_name: None,
+                priority: Priority::Normal,
+                connections: DEFAULT_CONNECTIONS,
+                speed_limit: None,
+            })
+            .unwrap();
+    }
+
+    fn fake_online() -> haul_engine::ProbeFn {
+        std::sync::Arc::new(|url: String| {
+            Box::pin(async move {
+                Ok(haul_engine::ProbeInfo {
+                    final_url: url.clone(),
+                    size: Some(1_000_000),
+                    resumable: true,
+                    file_name: url.rsplit('/').next().unwrap_or_default().to_string(),
+                    etag: None,
+                    last_modified: None,
+                    content_type: None,
+                })
+            })
+        })
+    }
+
+    fn core_fake(store: Store, dir: &std::path::Path) -> AppCore {
+        AppCore::start_full(store, dir.to_path_buf(), never(), fake_online())
+    }
+
+    async fn wait_checked(c: &AppCore) -> crate::dto::CollectorSnapshot {
+        for _ in 0..300 {
+            let s = c.collector_snapshot().unwrap();
+            if !s.links.is_empty() && s.links.iter().all(|l| l.status != haul_engine::LinkStatus::Checking) {
+                return s;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        panic!("links never checked");
     }
 
     #[tokio::test]
-    async fn add_many_links_one_package() {
+    async fn add_links_goes_to_collector() {
         let dir = tempfile::tempdir().unwrap();
-        let c = core(Store::open_in_memory().unwrap(), dir.path());
-        let r = c.add_links("https://a.org/1.bin\nhttps://a.org/2.bin\nhttps://a.org/3.bin").unwrap();
-        assert_eq!(r.added, 3);
-        let pid = r.package_id.expect("package");
-        let s = c.snapshot().unwrap();
-        assert_eq!(s.packages.len(), 1);
-        assert_eq!(s.packages[0].id, pid);
-        assert!(s.packages[0].name.starts_with("Pasted list · "), "{}", s.packages[0].name);
-        assert_eq!(s.downloads.len(), 3);
-        assert!(s.downloads.iter().all(|d| d.package_id == Some(pid)));
+        let c = core_fake(Store::open_in_memory().unwrap(), dir.path());
+        let r = c.add_links("x https://a.org/1.bin y https://a.org/2.bin", "paste").unwrap();
+        assert_eq!(r, IntakeResult { added: 2, skipped: 0 });
+        assert!(c.snapshot().unwrap().downloads.is_empty());
+        let s = c.collector_snapshot().unwrap();
+        assert_eq!(s.links.len(), 2);
+        assert!(s.links.iter().all(|l| l.source == "paste"));
+    }
+
+    #[tokio::test]
+    async fn add_links_rejects_unknown_source() {
+        let dir = tempfile::tempdir().unwrap();
+        let c = core_fake(Store::open_in_memory().unwrap(), dir.path());
+        assert!(c.add_links("https://a.org/x", "browser").is_err());
+        assert!(c.collector_snapshot().unwrap().links.is_empty());
     }
 
     #[tokio::test]
     async fn add_no_links() {
         let dir = tempfile::tempdir().unwrap();
-        let c = core(Store::open_in_memory().unwrap(), dir.path());
-        let r = c.add_links("nothing here").unwrap();
-        assert_eq!(r.added, 0);
-        assert_eq!(r.package_id, None);
-        assert!(c.snapshot().unwrap().packages.is_empty());
-        assert!(c.store.list_packages().unwrap().is_empty());
+        let c = core_fake(Store::open_in_memory().unwrap(), dir.path());
+        let r = c.add_links("nothing here", "paste").unwrap();
+        assert_eq!(r, IntakeResult { added: 0, skipped: 0 });
+        assert!(c.store.list_batches().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn collector_start_moves_to_queue() {
+        let dir = tempfile::tempdir().unwrap();
+        let c = core_fake(Store::open_in_memory().unwrap(), dir.path());
+        c.add_links("https://a.org/1.bin https://a.org/2.bin", "drop").unwrap();
+        let s = wait_checked(&c).await;
+        let ids: Vec<i64> = s.links.iter().map(|l| l.id).collect();
+        assert_eq!(c.collector_start(&ids).unwrap(), StartResult { started: 2 });
+        let q = c.snapshot().unwrap();
+        assert_eq!(q.downloads.len(), 2);
+        assert!(q.downloads[0].package_id.is_some() && q.downloads[0].package_id == q.downloads[1].package_id);
+        assert_eq!(q.downloads[0].size, Some(1_000_000));
+        assert_eq!(q.downloads[0].target_dir, dir.path().to_string_lossy());
+        assert!(c.collector_snapshot().unwrap().links.is_empty());
+        c.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn filters_default_and_persist() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("haul.db");
+        {
+            let c = core_fake(Store::open(&db).unwrap(), dir.path());
+            let f = c.collector_snapshot().unwrap().filters;
+            assert_eq!(f, CollectorFilters { html: true, images: true, small: false, duplicates: false, exts: vec![] });
+            c.set_collector_filters(CollectorFilters {
+                html: false,
+                images: true,
+                small: true,
+                duplicates: true,
+                exts: vec![".ISO".into(), "iso".into(), "".into(), " .Mkv ".into()],
+            })
+            .unwrap();
+            c.shutdown().await;
+        }
+        let c = core_fake(Store::open(&db).unwrap(), dir.path());
+        assert_eq!(
+            c.collector_snapshot().unwrap().filters,
+            CollectorFilters {
+                html: false,
+                images: true,
+                small: true,
+                duplicates: true,
+                exts: vec!["iso".into(), "mkv".into()]
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn watch_clipboard_defaults_off_and_persists() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open_in_memory().unwrap();
+        let c = core_fake(store.clone(), dir.path());
+        assert!(!c.watch_clipboard());
+        assert!(!c.collector_snapshot().unwrap().watch_clipboard);
+        c.set_watch_clipboard(true).unwrap();
+        assert!(c.watch_clipboard());
+        c.shutdown().await;
+        let fresh = core_fake(store, dir.path());
+        assert!(fresh.watch_clipboard());
+        assert!(fresh.collector_snapshot().unwrap().watch_clipboard);
     }
 
     #[tokio::test]
@@ -325,7 +491,7 @@ mod tests {
     async fn set_priority_rejects_unknown() {
         let dir = tempfile::tempdir().unwrap();
         let c = core(Store::open_in_memory().unwrap(), dir.path());
-        c.add_links("https://a.org/f.bin").unwrap();
+        queue_one(&c);
         let id = c.snapshot().unwrap().downloads[0].id;
         assert!(c.set_priority(id, "urgent").is_err());
         c.set_priority(id, "high").unwrap();
@@ -337,7 +503,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let store = Store::open_in_memory().unwrap();
         let c = core(store.clone(), dir.path());
-        c.add_links("https://a.org/f.bin").unwrap();
+        queue_one(&c);
         let id = c.snapshot().unwrap().downloads[0].id;
         let saved = dir.path().join("f (1).bin");
         store.set_completed(id, &saved).unwrap();
@@ -350,7 +516,7 @@ mod tests {
     async fn folder_target_for_unfinished_is_dir() {
         let dir = tempfile::tempdir().unwrap();
         let c = core(Store::open_in_memory().unwrap(), dir.path());
-        c.add_links("https://a.org/f.bin").unwrap();
+        queue_one(&c);
         let id = c.snapshot().unwrap().downloads[0].id;
         assert_eq!(c.folder_target(id).unwrap(), FolderTarget::OpenDir(dir.path().to_path_buf()));
     }

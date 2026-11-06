@@ -10,6 +10,19 @@ test('contrast_aa_both_themes', async ({ page }) => {
   expect(where).toEqual([]);
 });
 
+test('collector_has_no_violations', async ({ page }) => {
+  await page.goto('/?demo=1');
+  await page.getByRole('navigation', { name: 'Views' }).getByRole('button', { name: /Collector/ }).click();
+  const list = page.locator('[aria-label="Collector links"]');
+  await list.locator('[role="row"][data-kind="link"]').first().click();
+  await page.waitForTimeout(500);
+  const r = await new AxeBuilder({ page }).include('main').withRules(['color-contrast']).analyze();
+  const where = r.violations.flatMap((v) => v.nodes.map((n) => `${n.target.join(' ')}: ${n.failureSummary}`));
+  expect(where).toEqual([]);
+  const roles = await new AxeBuilder({ page }).include('main').withTags(['wcag2a', 'wcag2aa']).analyze();
+  expect(roles.violations.map((v) => `${v.id}: ${v.nodes.length}`)).toEqual([]);
+});
+
 test('reduced_motion_stops_animation', async ({ page }) => {
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.goto('/?demo=1');

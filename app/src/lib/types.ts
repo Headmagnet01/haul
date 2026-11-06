@@ -60,9 +60,61 @@ export interface Update {
   states: { id: number; state: State; error: string | null }[];
   steals: { id: number; bytes: number }[];
   resync: boolean;
+  /** The Collector changed: reload its snapshot. */
+  collector: boolean;
 }
 
-export interface AddResult {
+export type LinkStatus = 'checking' | 'online' | 'offline' | 'expired' | 'error';
+export type DupKind = 'downloaded' | 'queued' | 'collector';
+export type Source = 'clipboard' | 'paste' | 'drop';
+export type ArchiveKind = 'rar' | '7z' | 'zip';
+
+export interface CollectedLink {
+  id: number;
+  batchId: number;
+  url: string;
+  name: string;
+  size: number | null;
+  contentType: string | null;
+  status: LinkStatus;
+  message: string | null;
+  source: string;
+  duplicate: DupKind | null;
+  /** null for a lone link. */
+  packageKey: string | null;
+}
+
+export interface CollectorPackage {
+  key: string;
+  name: string;
+  archive: ArchiveKind | null;
+  source: string;
+  createdAt: string;
+}
+
+export interface CollectorFilters {
+  html: boolean;
+  images: boolean;
+  small: boolean;
+  duplicates: boolean;
+  /** Lowercase, no leading dot. */
+  exts: string[];
+}
+
+export interface CollectorSnapshot {
+  packages: CollectorPackage[];
+  /** Display order: each package's links follow it. */
+  links: CollectedLink[];
+  filters: CollectorFilters;
+  watchClipboard: boolean;
+}
+
+export interface IntakeResult {
   added: number;
-  packageId: number | null;
+  /** Links already waiting in the Collector. */
+  skipped: number;
+}
+
+export interface StartResult {
+  started: number;
 }

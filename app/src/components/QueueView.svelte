@@ -108,35 +108,9 @@
     e.preventDefault();
   }
 
-  function onPaste(e: ClipboardEvent) {
-    if (isTextField(e.target)) return;
-    const text = e.clipboardData?.getData('text/plain') ?? '';
-    e.preventDefault();
-    void app.addText(text);
-  }
-
-  const ROW_TYPE = 'application/x-haul-row';
-  function droppable(e: DragEvent) {
-    const types = e.dataTransfer?.types ?? [];
-    return !types.includes(ROW_TYPE) && (types.includes('text/plain') || types.includes('text/uri-list') || types.includes('Files'));
-  }
-  function onDragOver(e: DragEvent) {
-    if (droppable(e)) e.preventDefault();
-  }
-  async function onDrop(e: DragEvent) {
-    if (!droppable(e) || isTextField(e.target)) return;
-    e.preventDefault();
-    const dt = e.dataTransfer!;
-    let text = dt.getData('text/uri-list') || dt.getData('text/plain');
-    for (const f of Array.from(dt.files)) {
-      if (f.name.toLowerCase().endsWith('.txt') || f.type === 'text/plain') text += '\n' + (await f.text());
-    }
-    void app.addText(text);
-  }
 </script>
 
-<svelte:window onkeydown={onKey} ondragover={onDragOver} ondrop={onDrop} />
-<svelte:document onpaste={onPaste} />
+<svelte:window onkeydown={onKey} />
 
 <main class="main">
   <div class="top">
@@ -168,8 +142,8 @@
   {#if adding}
     <AddLinks
       onadd={async (t) => {
-        const r = await app.addText(t);
-        if (r.added > 0) adding = false;
+        const r = await app.addText(t, 'paste');
+        if (r.added > 0 || r.skipped > 0) adding = false;
       }}
       oncancel={() => (adding = false)}
     />

@@ -2,7 +2,9 @@ import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 import type { Backend } from './backend';
 import { applyUpdate, buildList, planDrop, planMove, summary, type ListItem, type MovePlan, type Sel } from './model';
 import { RangeSpeeds } from './speeds';
-import type { AddResult, DownloadView, Snapshot, SpeedLimit, Update } from './types';
+import type { DownloadView, IntakeResult, Snapshot, Source, SpeedLimit, Update } from './types';
+
+export type View = 'queue' | 'collector' | 'finished' | 'rules' | 'settings';
 
 export const HISTORY = 240; // 60 s at 4 updates per second
 
@@ -25,6 +27,7 @@ export function createAppState(backend: Backend) {
   let selectedPkg = $state<number | null>(null);
   let filter = $state('');
   let toast = $state<ToastMsg | null>(null);
+  let view = $state<View>('queue');
   let loaded = $state(false);
   let speedHistory = $state<number[]>([]);
   const lastSteal = new SvelteMap<number, number>();
@@ -107,10 +110,13 @@ export function createAppState(backend: Backend) {
     }, ms);
   }
 
-  async function addText(text: string): Promise<AddResult> {
-    const r = await backend.addLinks(text);
-    showToast(r.added === 0 ? 'No links found' : `Added ${r.added} download${r.added === 1 ? '' : 's'}`);
-    if (r.added > 0) await load();
+  /** Pasted, dropped or typed links go to the Collector. */
+  async function addText(text: string, source: Source): Promise<IntakeResult> {
+    const r = await backend.addLinks(text, source);
+    if (r.added > 0) {
+      const s = r.added === 1 ? '' : 's';
+      showToast(`Sent ${r.added} link${s} to the Collector`, { label: 'Show', run: () => (view = 'collector') });
+    } else showToast(r.skipped > 0 ? 'Already in the Collector' : 'No links found');
     return r;
   }
 
@@ -185,6 +191,8 @@ export function createAppState(backend: Backend) {
     get selectedPkg() { return selectedPkg; },
     get filter() { return filter; },
     set filter(v: string) { filter = v; },
+    get view() { return view; },
+    set view(v: View) { view = v; },
     get toast() { return toast; },
     set toast(v: ToastMsg | null) { toast = v; },
     get loaded() { return loaded; },

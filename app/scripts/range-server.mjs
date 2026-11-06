@@ -1,5 +1,5 @@
 // A tiny HTTP server for the real-app smoke run. No dependencies.
-// Serves /file.bin: 64 MiB of deterministic bytes ((i * 31 + 7) % 251, as in the engine tests),
+// Serves any /<name>.bin path (the same file): 64 MiB of deterministic bytes ((i * 31 + 7) % 251, as in the engine tests),
 // with Accept-Ranges, 206 + Content-Range, an ETag, and a per-response throttle.
 // Usage: node scripts/range-server.mjs <port> [bytesPerSecondPerResponse=1000000]
 import { createServer } from 'node:http';
@@ -15,7 +15,7 @@ const sha = createHash('sha256').update(data).digest('hex');
 
 const server = createServer((req, res) => {
   const path = new URL(req.url ?? '/', 'http://x').pathname;
-  if (path !== '/file.bin') {
+  if (!path.endsWith('.bin')) {
     res.writeHead(404).end();
     return;
   }

@@ -2,6 +2,7 @@
 // WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9222 npx tauri dev
 import { chromium, expect, test, type Page } from '@playwright/test';
 import { createHash } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 
 const PORT = Number(process.env.HAUL_SMOKE_PORT ?? 8765);
@@ -21,13 +22,28 @@ async function appPage(): Promise<Page> {
   return page;
 }
 
-test('real download: add, pause, resume, complete, verify', async () => {
-  const page = await appPage();
+const nav = (page: Page, name: RegExp) => page.getByRole('navigation', { name: 'Views' }).getByRole('button', { name });
+const collectorRow = (page: Page, name: string) =>
+  page.locator('[aria-label="Collector links"] [role="row"][data-kind="link"]').filter({ hasText: name }).last();
+
+/** Pastes a link, which lands in the Collector, checks it online, starts it, and returns to the Queue. */
+async function sendToQueue(page: Page, url: string, name: string) {
   await page.evaluate((t) => {
     const dt = new DataTransfer();
     dt.setData('text/plain', t);
     document.body.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
-  }, URL_);
+  }, url);
+  await nav(page, /Collector/).click();
+  const row = collectorRow(page, name);
+  await expect(row).toContainText('Online', { timeout: 10_000 });
+  await row.getByRole('button', { name: 'Start' }).click();
+  await expect(page.getByRole('status')).toContainText('Started 1 download');
+  await nav(page, /Queue/).click();
+}
+
+test('real download: add, pause, resume, complete, verify', async () => {
+  const page = await appPage();
+  await sendToQueue(page, URL_, 'file.bin');
   const row = page.locator('[role="row"][data-kind="file"]').filter({ hasText: 'file' }).last();
   await expect(row).toContainText('Downloading', { timeout: 5000 });
   await row.click();
@@ -52,11 +68,7 @@ test('real download: add, pause, resume, complete, verify', async () => {
 
 test('removing a running download leaves no ghost row', async () => {
   const page = await appPage();
-  await page.evaluate((t) => {
-    const dt = new DataTransfer();
-    dt.setData('text/plain', t);
-    document.body.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
-  }, `${URL_}?remove`);
+  await sendToQueue(page, `${URL_}?remove`, 'file.bin');
   const rows = page.locator('[role="row"][data-kind="file"]');
   const row = rows.last();
   await expect(row).toContainText('Downloading', { timeout: 5000 });
@@ -74,4 +86,27 @@ test('removing a running download leaves no ghost row', async () => {
   }
   expect(Math.max(...seen)).toBe(0);
   await expect(rows).toHaveCount(before - 1);
+});
+
+test('a copied link reaches the Collector while Watch clipboard is on', async () => {
+  const page = await appPage();
+  const tog = page.getByRole('button', { name: 'Watch clipboard' });
+  if ((await tog.getAttribute('aria-pressed')) !== 'true') await tog.click();
+  await expect(tog).toHaveAttribute('aria-pressed', 'true');
+  const url = `http://127.0.0.1:${PORT}/clip-${Date.now()}.bin`;
+  const name = url.split('/').pop()!;
+  try {
+    execFileSync('powershell', ['-NoProfile', '-Command', `Set-Clipboard -Value '${url}'`]);
+    await nav(page, /Collector/).click();
+    const row = collectorRow(page, name);
+    await expect(row).toContainText('Online', { timeout: 5000 });
+    await expect(row).toContainText('Clipboard');
+    await row.click();
+    await page.keyboard.press('Delete');
+    await expect(row).toHaveCount(0);
+  } finally {
+    await tog.click();
+    await expect(tog).toHaveAttribute('aria-pressed', 'false');
+    await nav(page, /Queue/).click();
+  }
 });

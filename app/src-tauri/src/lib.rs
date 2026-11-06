@@ -1,6 +1,7 @@
 //! Haul's desktop app: Tauri glue around the engine.
 
 pub mod bridge;
+pub mod clipboard;
 pub mod commands;
 pub mod core;
 pub mod dto;
@@ -38,6 +39,12 @@ pub fn run() {
             commands::reorder,
             commands::set_speed_limit,
             commands::open_folder,
+            commands::collector_snapshot,
+            commands::collector_start,
+            commands::collector_remove,
+            commands::collector_recheck,
+            commands::set_collector_filters,
+            commands::set_watch_clipboard,
         ])
         .setup(|app| {
             if let Some(g) = app.path().app_log_dir().ok().and_then(|d| init_logging(&d)) {
@@ -56,6 +63,9 @@ pub fn run() {
                 });
             });
             tracing::info!(db = %db.display(), "Haul started");
+            if let Err(e) = crate::clipboard::spawn_watcher(core.clone()) {
+                tracing::warn!(error = %e, "clipboard watcher not started");
+            }
             app.manage(core);
             Ok(())
         })

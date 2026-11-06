@@ -88,11 +88,40 @@ pub struct Update {
     pub states: Vec<StateView>,
     pub steals: Vec<StealView>,
     pub resync: bool,
+    /// The Collector changed: the UI reloads its snapshot.
+    pub collector: bool,
+}
+
+pub use haul_engine::{CollectedLink, CollectorPackage, IntakeResult};
+
+/// Which Collector links are hidden. `exts` are lowercase, without a leading dot.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CollectorFilters {
+    pub html: bool,
+    pub images: bool,
+    pub small: bool,
+    pub duplicates: bool,
+    pub exts: Vec<String>,
+}
+
+impl Default for CollectorFilters {
+    fn default() -> Self {
+        CollectorFilters { html: true, images: true, small: false, duplicates: false, exts: Vec::new() }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct AddResult {
-    pub added: usize,
-    pub package_id: Option<i64>,
+pub struct CollectorSnapshot {
+    pub packages: Vec<CollectorPackage>,
+    pub links: Vec<CollectedLink>,
+    pub filters: CollectorFilters,
+    pub watch_clipboard: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StartResult {
+    pub started: usize,
 }

@@ -64,6 +64,40 @@ impl Priority {
     }
 }
 
+/// How a Collector link's online check went.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LinkStatus {
+    Checking,
+    Online,
+    Offline,
+    Expired,
+    Error,
+}
+
+impl LinkStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            LinkStatus::Checking => "checking",
+            LinkStatus::Online => "online",
+            LinkStatus::Offline => "offline",
+            LinkStatus::Expired => "expired",
+            LinkStatus::Error => "error",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        Some(match s {
+            "checking" => LinkStatus::Checking,
+            "online" => LinkStatus::Online,
+            "offline" => LinkStatus::Offline,
+            "expired" => LinkStatus::Expired,
+            "error" => LinkStatus::Error,
+            _ => return None,
+        })
+    }
+}
+
 /// What a probe learned about a link.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ProbeInfo {
@@ -101,6 +135,8 @@ pub enum Event {
         id: DownloadId,
     },
     AllDone,
+    /// Collector links were added, checked, started or removed.
+    CollectorChanged,
 }
 
 #[cfg(test)]

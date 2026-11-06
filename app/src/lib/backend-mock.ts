@@ -1,7 +1,8 @@
 // A small simulated engine for the browser and the tests. Deterministic: sizes and speeds come from the URL.
 
 import type { Backend } from './backend';
-import type { AddResult, DownloadView, PackageView, PriorityName, Seg, Snapshot, SpeedLimit, State, Update } from './types';
+import type { DownloadView, PackageView, PriorityName, Seg, Snapshot, SpeedLimit, State, Update } from './types';
+import { createMockCollector } from './backend-mock-collector';
 
 const MAX_PARALLEL = 3;
 const LIMIT_KEY = 'haul.mock.speedLimit';
@@ -85,13 +86,14 @@ function splitEven(size: number, n: number): Seg[] {
   });
 }
 
-export function createMockBackend(opts: { tickMs: number; demo: boolean }): Backend & { calls: string[] } {
+export function createMockBackend(opts: { tickMs: number; demo: boolean; checkMs?: number }): Backend & { calls: string[] } {
   const calls: string[] = [];
   const packages: PackageView[] = [];
   let downloads: DownloadView[] = [];
   const sims = new Map<number, Sim>();
   const listeners = new Set<(u: Update) => void>();
-  let pending: Update = { progress: [], states: [], steals: [], resync: false };
+  const empty = (): Update => ({ progress: [], states: [], steals: [], resync: false, collector: false });
+  let pending: Update = empty();
   let nextId = 1;
   let nextPkg = 1;
   let limit = readLimit();
@@ -202,8 +204,8 @@ export function createMockBackend(opts: { tickMs: number; demo: boolean }): Back
       }
     }
     const u = pending;
-    if (u.progress.length || u.states.length || u.steals.length || u.resync) {
-      pending = { progress: [], states: [], steals: [], resync: false };
+    if (u.progress.length || u.states.length || u.steals.length || u.resync || u.collector) {
+      pending = empty();
       listeners.forEach((cb) => cb(u));
     }
   }
@@ -239,6 +241,22 @@ export function createMockBackend(opts: { tickMs: number; demo: boolean }): Back
     for (const d of downloads) d.written = d.segments.reduce((a, g) => a + (g[1] - g[0]), 0);
   }
 
+  const sizeFor = (url: string) => 50_000_000 + (hash(url) % 450_000_000);
+  const collector = createMockCollector({
+    checkMs: opts.checkMs ?? 1200,
+    demo: opts.demo,
+    changed: () => (pending.collector = true),
+    downloaded: (url) => {
+      const d = downloads.find((x) => x.url === url);
+      return d ? (d.state === 'completed' ? 'downloaded' : 'queued') : null;
+    },
+    nameFromUrl,
+    sizeFor,
+    pastedName: () => pastedName(),
+    nowIso,
+  });
+  const queuePackages = new Map<string, number>();
+
   if (opts.demo) seedDemo();
   setInterval(tick, opts.tickMs);
 
@@ -252,24 +270,53 @@ export function createMockBackend(opts: { tickMs: number; demo: boolean }): Back
       const used = new Set(downloads.map((d) => d.packageId));
       return structuredClone({ packages: packages.filter((p) => used.has(p.id)), downloads, speedLimit: limit });
     },
-    async addLinks(text): Promise<AddResult> {
+    async addLinks(text, source) {
       rec('addLinks');
       const links = mockExtract(text);
-      if (links.length === 0) return { added: 0, packageId: null };
-      let packageId: number | null = null;
-      if (links.length >= 2) {
-        const p = { id: nextPkg++, name: pastedName(), createdAt: nowIso() };
-        packages.push(p);
-        packageId = p.id;
+      if (links.length === 0) return { added: 0, skipped: 0 };
+      return collector.intake(links, source);
+    },
+    async collectorSnapshot() {
+      rec('collectorSnapshot');
+      return collector.snapshot();
+    },
+    async collectorStart(ids) {
+      rec('collectorStart');
+      let started = 0;
+      for (const g of collector.take(ids)) {
+        let packageId: number | null = null;
+        if (g.key !== null) {
+          packageId = queuePackages.get(g.key) ?? null;
+          if (packageId === null) {
+            const p = { id: nextPkg++, name: g.name ?? pastedName(), createdAt: nowIso() };
+            packages.push(p);
+            packageId = p.id;
+            queuePackages.set(g.key, p.id);
+          }
+        }
+        for (const l of g.links) {
+          const d = add(l.url, packageId, { name: l.name, size: l.size ?? sizeFor(l.url) });
+          pending.states.push({ id: d.id, state: 'queued', error: null });
+          started++;
+        }
       }
-      for (const url of links) {
-        const d = add(url, packageId);
-        if (url.includes('404')) d.size = null;
-        pending.states.push({ id: d.id, state: 'queued', error: null });
-        if (url.includes('404')) setState(d, 'offline');
-        else if (url.includes('expired')) setState(d, 'link_expired');
-      }
-      return { added: links.length, packageId };
+      return { started };
+    },
+    async collectorRemove(ids) {
+      rec('collectorRemove');
+      collector.remove(ids);
+    },
+    async collectorRecheck(ids) {
+      rec('collectorRecheck');
+      collector.recheck(ids);
+    },
+    async setCollectorFilters(f) {
+      rec('setCollectorFilters');
+      collector.setFilters(f);
+    },
+    async setWatchClipboard(on) {
+      rec('setWatchClipboard');
+      collector.setWatch(on);
     },
     async pause(ids) {
       rec('pause');

@@ -1,5 +1,6 @@
 <script lang="ts" module>
-  export type View = 'queue' | 'collector' | 'finished' | 'rules' | 'settings';
+  import type { View } from '../lib/app-state.svelte';
+  export type { View };
   export const VIEWS: { id: View; label: string }[] = [
     { id: 'queue', label: 'Queue' },
     { id: 'collector', label: 'Collector' },
@@ -12,8 +13,13 @@
 <script lang="ts">
   import Icon from './Icon.svelte';
 
-  let { view, onselect, queueCount = 0 }: { view: View; onselect: (v: View) => void; queueCount?: number } =
-    $props();
+  let {
+    view,
+    onselect,
+    queueCount = 0,
+    collectorCount = 0,
+  }: { view: View; onselect: (v: View) => void; queueCount?: number; collectorCount?: number } = $props();
+  const countOf = (v: View) => (v === 'queue' ? queueCount : v === 'collector' ? collectorCount : 0);
 </script>
 
 <aside class="rail">
@@ -26,7 +32,7 @@
         onclick={() => onselect(v.id)}
       >
         <Icon name={v.id} />{v.label}
-        {#if v.id === 'queue' && queueCount > 0}<span class="ct" aria-hidden="true">{queueCount}</span>{/if}
+        {#if countOf(v.id) > 0}<span class="ct" aria-hidden="true">{countOf(v.id)}</span>{/if}
       </button>
     {/each}
   </nav>
