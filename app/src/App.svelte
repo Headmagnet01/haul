@@ -9,12 +9,17 @@
   import { getBackend } from './lib/backend';
   import { createAppState } from './lib/app-state.svelte';
   import { createCollectorState } from './lib/collector-state.svelte';
+  import { createPostprocState } from './lib/postproc-state.svelte';
 
   const app = createAppState(getBackend());
   const collector = createCollectorState(app.backend, { showToast: app.showToast, onStarted: () => void app.load() });
+  // A run that sorted files moved them, so the Queue reloads its snapshot too.
+  const post = createPostprocState(app.backend, { showToast: (t) => app.showToast(t), onChanged: () => void app.load() });
   app.onUpdate((u) => collector.onUpdate(u));
+  app.onUpdate((u) => post.onUpdate(u));
   void app.load();
   void collector.load();
+  void post.load();
 
   const label = $derived(VIEWS.find((v) => v.id === app.view)?.label ?? '');
   const active = $derived(app.snapshot.downloads.filter((d) => d.state !== 'completed' && !app.hidden.has(d.id)).length);
@@ -56,8 +61,8 @@
 <div class="app" class:with-drawer={app.view === 'queue'}>
   <Rail view={app.view} onselect={(v) => (app.view = v)} queueCount={active} collectorCount={collector.count} />
   {#if app.view === 'queue'}
-    <QueueView {app} />
-    <Drawer {app} />
+    <QueueView {app} {post} />
+    <Drawer {app} {post} />
   {:else if app.view === 'collector'}
     <CollectorView c={collector} />
   {:else}

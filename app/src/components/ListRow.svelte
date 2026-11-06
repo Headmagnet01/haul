@@ -5,6 +5,8 @@
   import type { ListItem, Sel } from '../lib/model';
   import type { Status } from '../lib/status';
   import { statusOf } from '../lib/status';
+  import { runStatus } from '../lib/postproc';
+  import type { Run } from '../lib/types';
   import { packageCells, stripCells, stripKind } from '../lib/strip';
   import { etaSeconds, formatBytes, formatEta, formatProgress, formatSpeed } from '../lib/format';
 
@@ -16,6 +18,7 @@
     onselect,
     ontogglepkg,
     ondropped,
+    run = null,
   }: {
     item: ListItem;
     speeds: Map<number, number>;
@@ -24,6 +27,8 @@
     onselect: () => void;
     ontogglepkg?: () => void;
     ondropped?: (dragged: Sel) => void;
+    /** This row's after-download run, when it has one. */
+    run?: Run | null;
   } = $props();
 
   const ROW_TYPE = 'application/x-haul-row';
@@ -55,7 +60,7 @@
         pct: formatProgress(d.written, d.size) + (running ? ` · ${open} conn` : ''),
         speed: running ? formatSpeed(bps) : '—',
         left: running ? formatEta(etaSeconds(d.written, d.size, bps)) : '—',
-        status: statusOf(d),
+        status: runStatus(run) ?? statusOf(d),
       };
     }
     const ch = item.children;
@@ -73,7 +78,7 @@
       pct: known ? `${formatBytes(done)} of ${formatBytes(total)}` : formatBytes(done),
       speed: anyRunning ? formatSpeed(bps) : '—',
       left: anyRunning && known ? formatEta(etaSeconds(done, total, bps)) : '—',
-      status: pkgStatus(ch),
+      status: runStatus(run) ?? pkgStatus(ch),
     };
   });
 </script>
