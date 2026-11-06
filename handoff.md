@@ -1,6 +1,6 @@
 # Haul: handoff
 
-Last updated: 6 Nov 2026. Plans 1, 2 and 3 are merged into `master` (plan 3 at `d4208c5`). Plan 4 (post-processing + Rules) is built on branch `feat/post-processing`, all checks green, **not merged**: it waits for the owner's go-ahead.
+Last updated: 6 Nov 2026. Plans 1–4 are merged into `master`. Plan 4 (post-processing + Rules) merged at `b43c7cc` on the owner's go-ahead, after a full green rerun on `master`.
 
 ## What Haul is
 A free, open-source Windows download manager. It pairs IDM's fast engine and browser capture with JDownloader 2's link collector, packages and auto-extraction, in a calm "dispatch board" interface.
@@ -12,12 +12,12 @@ A free, open-source Windows download manager. It pairs IDM's fast engine and bro
 ## Where things stand
 | | |
 |---|---|
-| Branch | `feat/post-processing` (plan 4, cut from `master` at `eee5505`), not merged. `master` has plans 1–3. No Git remote exists. |
-| Done | Plans 1, 2 and 3 merged. Plan 4 built: `docs/superpowers/plans/2026-11-06-haul-plan-4-post-processing.md`, Tasks 1–10, design in `docs/superpowers/specs/2026-11-06-haul-post-processing-design.md`. |
+| Branch | `master`. Plan 4 merged at `b43c7cc` (plan 3 at `d4208c5`). No Git remote exists. Cut a new branch for plan 5. |
+| Done | Plans 1–4, all merged. Plan 4: `docs/superpowers/plans/2026-11-06-haul-plan-4-post-processing.md`, Tasks 1–10, design in `docs/superpowers/specs/2026-11-06-haul-post-processing-design.md`. |
 | Tests | Rust: 254 tests (engine + app). Front end: 72 Vitest unit tests and 51 Playwright e2e tests, run in both light and dark (102 runs), plus 4 real-app smoke tests (all green on 6 Nov, after the plan-4 fixes). Clippy, rustfmt and svelte-check are clean. |
 | Real-app check | `npm run smoke` (6 Nov): a pasted link goes through the Collector (checked Online, started), then pause at 30%+, resume and complete with a matching SHA-256; removing a running download leaves no ghost; a link copied with `Set-Clipboard` while Watch clipboard is on reaches the Collector marked Clipboard. Graceful window close was not re-checked in this run: the app ran on a desktop the tools could not send window messages to (plan 2 checked it). |
 | Post-review check (6 Nov) | Every check rerun after the review fixes and green: 162 Rust tests, clippy, rustfmt, 57 Vitest, svelte-check, 78 e2e runs and all 3 real-app smoke tests. The owner closed the real app by hand (X) and the log says "Haul exiting: saving downloads". The dev DB is at schema 3, and its `download_dir` setting points at `_tmp/smoke`. |
-| Next | The owner decides on merging `feat/post-processing`; then plan 5 (local API, pairing, browser extension; spec section 6). |
+| Next | Plan 5: local API, pairing and the browser extension (spec section 6). Plan 4's final review was a self-review; a fresh whole-branch review (e.g. `/code-review`) is still open if wanted. |
 
 ## The app, and how to run it
 - **Real app:** `cd app` and `npx tauri dev`. The window is titled Haul, 1280×800 by default.
@@ -65,6 +65,7 @@ A free, open-source Windows download manager. It pairs IDM's fast engine and bro
   - Downloading the same archive set again joined the first, finished package, so it was never post-processed (`same_set_again_gets_a_new_package`). A late missing part still joins its siblings.
   - A name clash turned `split.7z.001` into `split.7z (1).001`, which is no longer a volume of any set; it is now `split (1).7z.001` (`numbered_archive_volumes_stay_in_their_set`).
 - **Smoke folder:** `_tmp/smoke` holds leftovers from those failing runs (`split.7z (n).00N` in its root). Scratch, safe to clear by hand.
+- **Review:** a self-review only (the session could not start a fresh reviewer unasked); the owner merged on that basis. Deferred minors: a run that failed for a missing part needs Retry once the part arrives; the archive password reaches 7-Zip on its command line; downloads finished before plan 4 show Process instead of a run; with auto off, finished rows say "Waiting to process". The executor ledger was deleted after the merge; this section and the commit messages are the record.
 - **Not checked by eye:** the Rules view was covered by e2e and axe in both themes, but not screenshotted (the browser pane was hidden). The drawer's steps were screenshotted in the mock.
 
 ## Plan 3: the Collector (6 Nov 2026)
