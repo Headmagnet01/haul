@@ -5,6 +5,7 @@ pub mod events;
 pub mod grabber;
 pub mod links;
 pub mod naming;
+pub mod postproc;
 pub mod probe;
 pub mod queue;
 pub mod ratelimit;

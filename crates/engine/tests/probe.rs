@@ -89,3 +89,32 @@ async fn probe_unknown_size() {
     assert_eq!(p.size, None);
     assert!(!p.resumable);
 }
+
+const HH_SHA256_B64: &str = "2QCtRzznMHRR8ZwXw03RervIA1hCZCkyhjs1EEpBHpw=";
+const HH_SHA256: &str = "d900ad473ce7307451f19c17c34dd17abbc8035842642932863b35104a411e9c";
+
+#[tokio::test]
+async fn probe_reads_repr_digest() {
+    let mut spec = Spec::new(70_000);
+    spec.extra_headers = vec![("Repr-Digest".into(), format!("sha-256=:{HH_SHA256_B64}:"))];
+    let p = probe_spec(spec).await.unwrap();
+    assert_eq!(p.digest, Some(format!("sha256:{HH_SHA256}")));
+}
+
+#[tokio::test]
+async fn probe_reads_content_md5_from_head() {
+    let mut spec = Spec::new(70_000);
+    spec.extra_headers = vec![("Content-MD5".into(), "DdjAPvdGhuEWk9z/u3qUFw==".into())];
+    let p = probe_spec(spec).await.unwrap();
+    assert_eq!(p.digest.as_deref(), Some("md5:0dd8c03ef74686e11693dcffbb7a9417"));
+}
+
+#[tokio::test]
+async fn probe_ignores_content_md5_on_206() {
+    let mut spec = Spec::new(70_000);
+    spec.head_allowed = false;
+    spec.extra_headers = vec![("Content-MD5".into(), "DdjAPvdGhuEWk9z/u3qUFw==".into())];
+    let p = probe_spec(spec).await.unwrap();
+    assert!(p.resumable);
+    assert_eq!(p.digest, None);
+}

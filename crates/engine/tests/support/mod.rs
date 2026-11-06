@@ -60,6 +60,8 @@ pub struct Spec {
     pub range_status: Option<u16>,
     /// GETs beyond this many open responses get 429 Too Many Requests.
     pub max_open: Option<u32>,
+    /// Sent on every successful reply (HEAD, 200 and 206).
+    pub extra_headers: Vec<(String, String)>,
 }
 
 impl Spec {
@@ -229,6 +231,9 @@ async fn handle(State(s): State<Arc<Srv>>, method: Method, headers: HeaderMap) -
     }
     if let Some(cd) = &spec.content_disposition {
         b = b.header(header::CONTENT_DISPOSITION, cd.as_str());
+    }
+    for (k, v) in &spec.extra_headers {
+        b = b.header(k.as_str(), v.as_str());
     }
     let (status, start, end) = match range {
         Some((a, z)) => (StatusCode::PARTIAL_CONTENT, a, z + 1),
