@@ -1,5 +1,6 @@
 import type {
-  CollectorFilters, CollectorSnapshot, IntakeResult, PriorityName, Snapshot, Source, SpeedLimit, StartResult, Update,
+  Category, CollectorFilters, CollectorSnapshot, Destination, IntakeResult, PostProcSettings, PriorityName, Rule,
+  RulesConfig, Run, Snapshot, Source, SpeedLimit, StartResult, Update,
 } from './types';
 import { createMockBackend } from './backend-mock';
 import { tauriBackend } from './backend-tauri';
@@ -22,6 +23,26 @@ export interface Backend {
   reorder(ids: number[]): Promise<void>;
   setSpeedLimit(l: SpeedLimit): Promise<void>;
   openFolder(id: number): Promise<void>;
+  postprocRuns(): Promise<Run[]>;
+  /** Runs a finished package (or lone file) now. Returns the run id. */
+  postprocProcess(t: { packageId?: number; downloadId?: number }): Promise<number>;
+  postprocRetry(runId: number): Promise<void>;
+  postprocPassword(runId: number, password: string, remember: boolean): Promise<void>;
+  /** Rejects with the message when the text isn't a checksum. */
+  setExpectedHash(id: number, hash: string | null): Promise<void>;
+  rulesConfig(): Promise<RulesConfig>;
+  setPostprocSettings(s: PostProcSettings): Promise<void>;
+  setCategories(c: Category[]): Promise<void>;
+  /** Rejects with the first invalid rule's message; nothing is saved then. */
+  setRules(r: Rule[]): Promise<void>;
+  /** Where a file would go under a draft of the rules. */
+  tryRules(
+    facts: { name: string; host: string; size: number | null },
+    draft: { rules: Rule[]; categories: Category[]; sort: boolean },
+  ): Promise<Destination>;
+  addPassword(password: string): Promise<number>;
+  removePassword(id: number): Promise<void>;
+  orderPasswords(ids: number[]): Promise<void>;
   /** Returns an unsubscribe function. */
   onUpdate(cb: (u: Update) => void): () => void;
 }

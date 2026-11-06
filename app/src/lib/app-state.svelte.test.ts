@@ -11,7 +11,7 @@ function dl(id: number, state: State): DownloadView {
   };
 }
 const snap = (...ds: DownloadView[]): Snapshot => ({ packages: [], downloads: ds, speedLimit: { enabled: false, bps: 1 } });
-const upd = (u: Partial<Update>): Update => ({ progress: [], states: [], steals: [], resync: false, collector: false, ...u });
+const upd = (u: Partial<Update>): Update => ({ progress: [], states: [], steals: [], resync: false, collector: false, postproc: false, ...u });
 
 /** A backend whose snapshots resolve only when the test says so. */
 function fake() {

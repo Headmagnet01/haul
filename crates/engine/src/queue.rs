@@ -131,6 +131,19 @@ impl Queue {
         self.inner.wake.notify_one();
     }
 
+    /// Downloads a finished (or failed) file again from zero. Used when its checksum didn't match.
+    pub fn restart(&self, id: DownloadId) {
+        let running = self.inner.running.lock().unwrap();
+        if running.contains_key(&id) {
+            return;
+        }
+        if self.ctx().store.reset_download(id).is_ok() {
+            self.ctx().events.send(Event::StateChanged { id, state: DownloadState::Queued, error: None });
+        }
+        drop(running);
+        self.inner.wake.notify_one();
+    }
+
     pub fn set_priority(&self, id: DownloadId, p: Priority) {
         if let Ok(d) = self.ctx().store.get_download(id) {
             let _ = self.ctx().store.set_order(id, p, d.position);

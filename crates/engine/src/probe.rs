@@ -2,6 +2,7 @@
 
 use crate::error::EngineError;
 use crate::naming::filename_from;
+use crate::postproc::checksum::digest_from_headers;
 use crate::types::ProbeInfo;
 use reqwest::header::{self, HeaderMap};
 use reqwest::{Client, Response, StatusCode, redirect};
@@ -35,7 +36,8 @@ pub fn content_range_total(h: &HeaderMap) -> Option<u64> {
     v.rsplit_once('/')?.1.trim().parse().ok()
 }
 
-fn info_from(resp: &Response, size: Option<u64>, resumable: bool) -> ProbeInfo {
+/// `full_body`: the reply is a HEAD or a full 200, so a `Content-MD5` describes the whole file.
+fn info_from(resp: &Response, size: Option<u64>, resumable: bool, full_body: bool) -> ProbeInfo {
     let h = resp.headers();
     let cd = header_str(h, header::CONTENT_DISPOSITION);
     ProbeInfo {
@@ -46,6 +48,7 @@ fn info_from(resp: &Response, size: Option<u64>, resumable: bool) -> ProbeInfo {
         etag: header_str(h, header::ETAG),
         last_modified: header_str(h, header::LAST_MODIFIED),
         content_type: header_str(h, header::CONTENT_TYPE),
+        digest: digest_from_headers(h, full_body),
     }
 }
 
@@ -61,7 +64,7 @@ pub async fn probe(client: &Client, url: &str, headers: &HeaderMap) -> Result<Pr
         let len = content_length(h).filter(|&l| l > 0);
         let ranges = header_str(h, header::ACCEPT_RANGES).is_some_and(|v| v.to_ascii_lowercase().contains("bytes"));
         if let (Some(len), true) = (len, ranges) {
-            return Ok(info_from(&resp, Some(len), true));
+            return Ok(info_from(&resp, Some(len), true, true));
         }
     }
 
@@ -69,13 +72,13 @@ pub async fn probe(client: &Client, url: &str, headers: &HeaderMap) -> Result<Pr
     let info = match resp.status() {
         StatusCode::PARTIAL_CONTENT => {
             let total = content_range_total(resp.headers());
-            info_from(&resp, total, total.is_some())
+            info_from(&resp, total, total.is_some(), false)
         }
         StatusCode::RANGE_NOT_SATISFIABLE => {
             // Only an empty file can't satisfy bytes=0-0.
-            info_from(&resp, Some(0), false)
+            info_from(&resp, Some(0), false, false)
         }
-        s if s.is_success() => info_from(&resp, content_length(resp.headers()), false),
+        s if s.is_success() => info_from(&resp, content_length(resp.headers()), false, true),
         s => return Err(EngineError::from_status(s.as_u16())),
     };
     drop(resp); // don't read the body

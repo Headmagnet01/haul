@@ -60,6 +60,12 @@ pub struct Spec {
     pub range_status: Option<u16>,
     /// GETs beyond this many open responses get 429 Too Many Requests.
     pub max_open: Option<u32>,
+    /// Sent on every successful reply (HEAD, 200 and 206).
+    pub extra_headers: Vec<(String, String)>,
+    /// Serve the body with its first byte flipped (a file that fails its checksum).
+    pub corrupt: bool,
+    /// Like `corrupt`, but only for this many GETs; each one served counts down.
+    pub corrupt_first_gets: u32,
 }
 
 impl Spec {
@@ -180,7 +186,14 @@ struct Stream {
 
 async fn handle(State(s): State<Arc<Srv>>, method: Method, headers: HeaderMap) -> Response {
     let n = s.requests.fetch_add(1, SeqCst) + 1;
-    let spec = s.spec.lock().unwrap().clone();
+    let spec = {
+        let mut live = s.spec.lock().unwrap();
+        let snapshot = live.clone();
+        if method != Method::HEAD && live.corrupt_first_gets > 0 {
+            live.corrupt_first_gets -= 1;
+        }
+        snapshot
+    };
     if let Some(code) = spec.status {
         return StatusCode::from_u16(code).unwrap().into_response();
     }
@@ -194,6 +207,13 @@ async fn handle(State(s): State<Arc<Srv>>, method: Method, headers: HeaderMap) -
             *d = body(spec.len);
         }
         d.clone()
+    };
+    let data = if (spec.corrupt || spec.corrupt_first_gets > 0) && !data.is_empty() {
+        let mut v = data.to_vec();
+        v[0] ^= 0xFF;
+        Bytes::from(v)
+    } else {
+        data
     };
     let len = spec.len as u64;
 
@@ -229,6 +249,9 @@ async fn handle(State(s): State<Arc<Srv>>, method: Method, headers: HeaderMap) -
     }
     if let Some(cd) = &spec.content_disposition {
         b = b.header(header::CONTENT_DISPOSITION, cd.as_str());
+    }
+    for (k, v) in &spec.extra_headers {
+        b = b.header(k.as_str(), v.as_str());
     }
     let (status, start, end) = match range {
         Some((a, z)) => (StatusCode::PARTIAL_CONTENT, a, z + 1),

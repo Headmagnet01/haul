@@ -7,7 +7,7 @@ beforeEach(() => vi.useFakeTimers());
 afterEach(() => vi.useRealTimers());
 
 const upd = (u: Partial<Update>): Update =>
-  ({ progress: [], states: [], steals: [], resync: false, collector: false, ...u });
+  ({ progress: [], states: [], steals: [], resync: false, collector: false, postproc: false, ...u });
 
 function setup() {
   const b = createMockBackend({ tickMs: 250, demo: false, checkMs: 50 });

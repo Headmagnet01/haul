@@ -181,49 +181,28 @@ mod tests {
             etag: None,
             last_modified: None,
             content_type: Some("application/octet-stream".into()),
+            digest: None,
         }
-    }
-
-    #[test]
-    fn schema_version_is_3() {
-        let s = Store::open_in_memory().unwrap();
-        assert_eq!(s.schema_version().unwrap(), 3);
     }
 
     #[test]
     fn migrates_v1_to_latest() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("haul.db");
+        // A database that only ever saw migration 1, holding a download.
         {
             let c = rusqlite::Connection::open(&path).unwrap();
             c.execute_batch(&format!("BEGIN; {} PRAGMA user_version = 1; COMMIT;", include_str!("schema.sql")))
                 .unwrap();
-        }
-        let id = {
-            let s = Store::open(&path).unwrap();
-            s.insert_download(&NewDownload {
-                package_id: None,
-                url: "https://example.org/a.bin".into(),
-                headers_json: None,
-                target_dir: PathBuf::from(r"C:\dl"),
-                file_name: None,
-                priority: Priority::Normal,
-                connections: 8,
-                speed_limit: None,
-            })
-            .unwrap()
-        };
-        // Simulate a database that only ever saw migration 1 holding a download.
-        {
-            let c = rusqlite::Connection::open(&path).unwrap();
-            c.execute_batch(
-                "DROP TABLE collector_archives; DROP TABLE collector_groups; DROP TABLE collector_links;                  DROP TABLE collector_batches; PRAGMA user_version = 1;",
+            c.execute(
+                "INSERT INTO downloads (url, position, target_dir) VALUES ('https://example.org/a.bin', 1, 'C:/dl')",
+                [],
             )
-                .unwrap();
+            .unwrap();
         }
         let s = Store::open(&path).unwrap();
-        assert_eq!(s.schema_version().unwrap(), 3);
-        assert_eq!(s.list_downloads().unwrap()[0].id, id);
+        assert_eq!(s.schema_version().unwrap(), 4);
+        assert_eq!(s.list_downloads().unwrap()[0].url, "https://example.org/a.bin");
         s.create_batch("paste", "x").unwrap();
     }
 

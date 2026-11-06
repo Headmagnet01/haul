@@ -8,7 +8,7 @@ export type Seg = [number, number, number];
 export type IconName =
   | 'queue' | 'collector' | 'finished' | 'rules' | 'settings'
   | 'dl' | 'ok' | 'err' | 'pause' | 'play' | 'wait'
-  | 'chev' | 'plus' | 'search' | 'folder' | 'link' | 'x';
+  | 'chev' | 'plus' | 'search' | 'folder' | 'link' | 'x' | 'ext';
 
 export interface DownloadView {
   id: number;
@@ -62,6 +62,8 @@ export interface Update {
   resync: boolean;
   /** The Collector changed: reload its snapshot. */
   collector: boolean;
+  /** A post-processing run changed: reload the runs and the snapshot. */
+  postproc: boolean;
 }
 
 export type LinkStatus = 'checking' | 'online' | 'offline' | 'expired' | 'error';
@@ -117,4 +119,79 @@ export interface IntakeResult {
 
 export interface StartResult {
   started: number;
+}
+
+// Post-processing and rules (plan 4).
+
+export type StepKind = 'verify' | 'extract' | 'sort' | 'scan' | 'notify';
+export type StepState = 'pending' | 'running' | 'done' | 'skipped' | 'failed' | 'needs_password';
+export type RunState = 'held' | 'queued' | 'running' | 'waiting' | 'needs_password' | 'failed' | 'done';
+
+export interface Step {
+  kind: StepKind;
+  state: StepState;
+  detail: string | null;
+}
+
+/** One package's (or lone file's) after-download run. */
+export interface Run {
+  id: number;
+  packageId: number | null;
+  downloadId: number | null;
+  state: RunState;
+  steps: Step[];
+  updatedAt: string;
+}
+
+export interface PostProcSettings {
+  auto: boolean;
+  sortCategories: boolean;
+  recycleArchives: boolean;
+  virusScan: boolean;
+}
+
+export interface Category {
+  name: string;
+  /** Lowercase, no dot. */
+  exts: string[];
+  /** Absolute, or relative to the download folder. */
+  folder: string;
+}
+
+export interface RuleMatch {
+  host: string | null;
+  /** A glob, or a regex written /…/. */
+  name: string | null;
+  exts: string[];
+  minSize: number | null;
+  maxSize: number | null;
+}
+
+export interface RuleAction {
+  folder: string | null;
+  rename: string | null;
+}
+
+export interface Rule {
+  id: number;
+  name: string;
+  enabled: boolean;
+  match: RuleMatch;
+  action: RuleAction;
+}
+
+export interface RulesConfig {
+  settings: PostProcSettings;
+  categories: Category[];
+  rules: Rule[];
+  /** Saved archive passwords, by id only: the passwords never reach the UI. */
+  passwords: number[];
+}
+
+export interface Destination {
+  /** null: the file stays where it is. */
+  folder: string | null;
+  name: string;
+  /** `Rule “<name>”`, a category name, or '' when nothing matched. */
+  by: string;
 }

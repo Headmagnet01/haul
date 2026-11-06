@@ -19,6 +19,9 @@ pub enum EngineError {
     Db(#[from] rusqlite::Error),
     #[error("cancelled")]
     Cancelled,
+    /// Bad input from the user; the text is shown to them as is.
+    #[error("{0}")]
+    Invalid(String),
 }
 
 impl EngineError {

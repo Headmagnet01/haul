@@ -5,10 +5,13 @@
   import AddLinks from './AddLinks.svelte';
   import EmptyState from './EmptyState.svelte';
   import type { AppState } from '../lib/app-state.svelte';
+  import type { PostprocState } from '../lib/postproc-state.svelte';
   import { keyAction, type Action } from '../lib/keys';
   import type { ListItem } from '../lib/model';
 
-  let { app, onaction }: { app: AppState; onaction?: (a: Action) => boolean } = $props();
+  let { app, post, onaction }: { app: AppState; post?: PostprocState; onaction?: (a: Action) => boolean } = $props();
+  const runOf = (it: ListItem) =>
+    !post ? null : it.kind === 'package' ? post.byPackage(it.pkg.id) : it.d.packageId === null ? post.byDownload(it.d.id) : null;
 
   let adding = $state(false);
   let filterBox: HTMLInputElement | undefined = $state();
@@ -169,6 +172,7 @@
             ondropped={(dragged) =>
               app.drop(dragged, it.kind === 'package' ? { kind: 'package', id: it.pkg.id } : { kind: 'file', id: it.d.id })}
             ontogglepkg={it.kind === 'package' ? () => app.setCollapsed(it.pkg.id, it.open) : undefined}
+            run={runOf(it)}
           />
         {/each}
         {#if app.list.length === 0}

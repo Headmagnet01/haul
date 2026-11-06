@@ -3,3 +3,12 @@
 *.jpg binary
 *.ico binary
 *.db binary
+*.exe binary
+*.dll binary
+*.7z binary
+*.rar binary
+*.zip binary
+*.r[0-9][0-9] binary
+*.[0-9][0-9][0-9] binary
+*.bin binary
+app/src-tauri/resources/7zip/* -text

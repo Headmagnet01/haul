@@ -25,9 +25,24 @@ fn init_logging(dir: &std::path::Path) -> Option<LogGuard> {
     Some(LogGuard(guard))
 }
 
+/// The bundled 7-Zip: next to the app when installed; in the source tree for `tauri dev`.
+fn seven_zip_path(app: &tauri::App) -> std::path::PathBuf {
+    let bundled = app.path().resource_dir().map(|d| d.join("7zip").join("7z.exe")).unwrap_or_default();
+    if bundled.is_file() {
+        return bundled;
+    }
+    let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("resources/7zip/7z.exe");
+    if cfg!(debug_assertions) && source.is_file() {
+        return source;
+    }
+    tracing::warn!(path = %bundled.display(), "bundled 7-Zip not found; extraction will fail");
+    bundled
+}
+
 pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_notification::init())
         .invoke_handler(tauri::generate_handler![
             commands::snapshot,
             commands::add_links,
@@ -45,6 +60,19 @@ pub fn run() {
             commands::collector_recheck,
             commands::set_collector_filters,
             commands::set_watch_clipboard,
+            commands::postproc_runs,
+            commands::postproc_process,
+            commands::postproc_retry,
+            commands::postproc_password,
+            commands::set_expected_hash,
+            commands::rules_config,
+            commands::set_postproc_settings,
+            commands::set_categories,
+            commands::set_rules,
+            commands::try_rules,
+            commands::add_password,
+            commands::remove_password,
+            commands::order_passwords,
         ])
         .setup(|app| {
             if let Some(g) = app.path().app_log_dir().ok().and_then(|d| init_logging(&d)) {
@@ -54,7 +82,15 @@ pub fn run() {
             let download_dir =
                 app.path().download_dir().or_else(|_| app.path().home_dir().map(|h| h.join("Downloads")))?;
             let db = data_dir.join("haul.db");
-            let core = tauri::async_runtime::block_on(async { AppCore::start(&db, download_dir) })?;
+            let notifier = app.handle().clone();
+            let deps = AppCore::real_deps(seven_zip_path(app), move |n| {
+                use tauri_plugin_notification::NotificationExt;
+                match notifier.notification().builder().title(&n.title).body(&n.body).show() {
+                    Ok(()) => tracing::info!(title = %n.title, "notification sent"),
+                    Err(e) => tracing::warn!(error = %e, "notification failed"),
+                }
+            });
+            let core = tauri::async_runtime::block_on(async { AppCore::start(&db, download_dir, deps) })?;
             let handle = app.handle().clone();
             let events = core.events();
             tauri::async_runtime::block_on(async move {

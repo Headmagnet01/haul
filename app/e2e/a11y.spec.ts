@@ -67,3 +67,25 @@ test('focus_ring_is_focus_token', async ({ page }) => {
   });
   expect(outline).toBe('solid 2px');
 });
+
+test('rules_view_has_no_violations', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('navigation', { name: 'Views' }).getByRole('button', { name: 'Rules' }).click();
+  await page.getByRole('button', { name: 'Add rule' }).click();
+  await page.waitForTimeout(300);
+  const r = await new AxeBuilder({ page }).include('main').withTags(['wcag2a', 'wcag2aa']).analyze();
+  const where = r.violations.flatMap((v) => v.nodes.map((n) => `${v.id} ${n.target.join(' ')}: ${n.failureSummary}`));
+  expect(where).toEqual([]);
+});
+
+test('drawer_steps_have_no_violations', async ({ page }) => {
+  test.setTimeout(60_000);
+  await page.goto('/');
+  const { addViaCollector } = await import('./helpers');
+  await addViaCollector(page, 'https://x.org/secret.7z');
+  await page.locator('[role="row"][data-kind]').filter({ hasText: 'secret.7z' }).click();
+  await expect(page.getByLabel('Archive password')).toBeVisible({ timeout: 30_000 });
+  const r = await new AxeBuilder({ page }).include('aside[aria-label="Details"]').withTags(['wcag2a', 'wcag2aa']).analyze();
+  const where = r.violations.flatMap((v) => v.nodes.map((n) => `${v.id} ${n.target.join(' ')}: ${n.failureSummary}`));
+  expect(where).toEqual([]);
+});

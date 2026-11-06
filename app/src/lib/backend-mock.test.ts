@@ -99,3 +99,42 @@ test('demo seed', async () => {
   expect(c.links.find((l) => l.name === 'readme-old.pdf')!.status).toBe('offline');
   expect(c.links.find((l) => l.name === 'caminandes-3-4k.7z.004')!.status).toBe('checking');
 });
+
+test('mock_package_runs_steps_in_order', async () => {
+  const b = createMockBackend({ tickMs: 250, demo: false, checkMs: CHECK_MS });
+  await queue(b, 'https://x.org/film.7z.001 https://x.org/film.7z.002');
+  const seen: string[] = [];
+  for (let i = 0; i < 200; i++) {
+    await vi.advanceTimersByTimeAsync(250);
+    const r = (await b.postprocRuns())[0];
+    const running = r?.steps.find((s) => s.state === 'running')?.kind;
+    if (running && seen.at(-1) !== running) seen.push(running);
+    if (r?.state === 'done') break;
+  }
+  const r = (await b.postprocRuns())[0];
+  expect(r.state).toBe('done');
+  expect(r.packageId).not.toBeNull();
+  expect(r.steps.map((s) => s.state)).toEqual(['skipped', 'done', 'done', 'skipped', 'done']);
+  expect(r.steps[2].detail).toBe('Compressed → C:\\Users\\you\\Downloads\\Compressed');
+  expect(seen).toEqual(['verify', 'extract', 'sort', 'scan', 'notify']);
+});
+
+test('mock_secret_needs_password', async () => {
+  const b = createMockBackend({ tickMs: 250, demo: false, checkMs: CHECK_MS });
+  await queue(b, 'https://x.org/secret.7z');
+  let r = (await b.postprocRuns())[0];
+  for (let i = 0; i < 200 && r?.state !== 'needs_password'; i++) {
+    await vi.advanceTimersByTimeAsync(250);
+    r = (await b.postprocRuns())[0];
+  }
+  expect(r.steps[1]).toEqual({ kind: 'extract', state: 'needs_password', detail: 'Needs a password' });
+  await b.postprocPassword(r.id, 'nope', true);
+  for (let i = 0; i < 10; i++) await vi.advanceTimersByTimeAsync(250);
+  r = (await b.postprocRuns())[0];
+  expect(r.steps[1].detail).toBe('Wrong password');
+  expect((await b.rulesConfig()).passwords).toHaveLength(0);
+  await b.postprocPassword(r.id, 'haul', true);
+  for (let i = 0; i < 20; i++) await vi.advanceTimersByTimeAsync(250);
+  expect((await b.postprocRuns())[0].state).toBe('done');
+  expect((await b.rulesConfig()).passwords).toHaveLength(1);
+});

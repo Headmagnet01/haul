@@ -3,6 +3,7 @@
 import type { Backend } from './backend';
 import type { DownloadView, PackageView, PriorityName, Seg, Snapshot, SpeedLimit, State, Update } from './types';
 import { createMockCollector } from './backend-mock-collector';
+import { createMockPostproc } from './backend-mock-postproc';
 
 const MAX_PARALLEL = 3;
 const LIMIT_KEY = 'haul.mock.speedLimit';
@@ -92,7 +93,7 @@ export function createMockBackend(opts: { tickMs: number; demo: boolean; checkMs
   let downloads: DownloadView[] = [];
   const sims = new Map<number, Sim>();
   const listeners = new Set<(u: Update) => void>();
-  const empty = (): Update => ({ progress: [], states: [], steals: [], resync: false, collector: false });
+  const empty = (): Update => ({ progress: [], states: [], steals: [], resync: false, collector: false, postproc: false });
   let pending: Update = empty();
   let nextId = 1;
   let nextPkg = 1;
@@ -203,8 +204,9 @@ export function createMockBackend(opts: { tickMs: number; demo: boolean; checkMs
         setState(d, 'completed');
       }
     }
+    postproc.tick();
     const u = pending;
-    if (u.progress.length || u.states.length || u.steals.length || u.resync || u.collector) {
+    if (u.progress.length || u.states.length || u.steals.length || u.resync || u.collector || u.postproc) {
       pending = empty();
       listeners.forEach((cb) => cb(u));
     }
@@ -256,6 +258,13 @@ export function createMockBackend(opts: { tickMs: number; demo: boolean; checkMs
     nowIso,
   });
   const queuePackages = new Map<string, number>();
+  const postproc = createMockPostproc({
+    changed: () => (pending.postproc = true),
+    downloads: () => downloads,
+    packages: () => packages,
+  });
+  // Like Tauri: a rejected command rejects with the message string.
+  const call = async <T>(f: () => T): Promise<T> => f();
 
   if (opts.demo) seedDemo();
   setInterval(tick, opts.tickMs);
@@ -370,6 +379,58 @@ export function createMockBackend(opts: { tickMs: number; demo: boolean; checkMs
     },
     async openFolder() {
       rec('openFolder');
+    },
+    async postprocRuns() {
+      rec('postprocRuns');
+      return postproc.runs();
+    },
+    postprocProcess(t) {
+      rec('postprocProcess');
+      return call(() => postproc.process(t));
+    },
+    postprocRetry(runId) {
+      rec('postprocRetry');
+      return call(() => postproc.retry(runId));
+    },
+    postprocPassword(runId, password, remember) {
+      rec('postprocPassword');
+      return call(() => postproc.password(runId, password, remember));
+    },
+    setExpectedHash(id, hash) {
+      rec('setExpectedHash');
+      return call(() => postproc.setHash(id, hash));
+    },
+    async rulesConfig() {
+      rec('rulesConfig');
+      return postproc.rulesConfig();
+    },
+    setPostprocSettings(s) {
+      rec('setPostprocSettings');
+      return call(() => postproc.setSettings(s));
+    },
+    setCategories(c) {
+      rec('setCategories');
+      return call(() => postproc.setCategories(c));
+    },
+    setRules(r) {
+      rec('setRules');
+      return call(() => postproc.setRules(r));
+    },
+    tryRules(f, d) {
+      rec('tryRules');
+      return call(() => postproc.tryRules(f, d));
+    },
+    addPassword(pw) {
+      rec('addPassword');
+      return call(() => postproc.addPassword(pw));
+    },
+    removePassword(id) {
+      rec('removePassword');
+      return call(() => postproc.removePassword(id));
+    },
+    orderPasswords(ids) {
+      rec('orderPasswords');
+      return call(() => postproc.orderPasswords(ids));
     },
     onUpdate(cb) {
       listeners.add(cb);

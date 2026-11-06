@@ -21,6 +21,7 @@ fn info(url: &str) -> ProbeInfo {
         etag: None,
         last_modified: None,
         content_type: None,
+        digest: None,
     }
 }
 
@@ -379,6 +380,29 @@ async fn archive_parts_from_separate_intakes_join() {
     assert_eq!(names, vec!["movie.part1.rar", "Movie.part2.rar", "other.bin"]);
     assert_eq!(s.links[1].package_key.as_ref(), Some(&s.packages[0].key));
     assert_eq!(s.links[2].package_key, None);
+}
+
+#[tokio::test]
+async fn same_set_again_gets_a_new_package() {
+    // Found by the plan-4 smoke run: downloading an archive set a second time joined the first,
+    // finished package, so it was never post-processed.
+    let (p, _) = fake(online, 0);
+    let (g, store) = grabber(p);
+    let q = idle_queue(&store);
+    g.intake(links(&["https://a.org/m.part1.rar", "https://a.org/m.part2.rar"]), "paste").unwrap();
+    let s = wait_until(&g, "online", all_online).await;
+    let ids: Vec<i64> = s.links.iter().map(|l| l.id).collect();
+    assert_eq!(g.start(&ids, &q, &defaults()).unwrap(), 2);
+    g.intake(links(&["https://b.org/m.part1.rar", "https://b.org/m.part2.rar"]), "paste").unwrap();
+    let s = wait_until(&g, "online", all_online).await;
+    let ids: Vec<i64> = s.links.iter().map(|l| l.id).collect();
+    assert_eq!(g.start(&ids, &q, &defaults()).unwrap(), 2);
+    let ds = store.list_downloads().unwrap();
+    assert_eq!(ds.len(), 4);
+    assert_eq!(ds[0].package_id, ds[1].package_id);
+    assert_eq!(ds[2].package_id, ds[3].package_id);
+    assert_ne!(ds[0].package_id, ds[2].package_id, "{ds:?}");
+    q.shutdown().await;
 }
 
 #[tokio::test]

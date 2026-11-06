@@ -1,11 +1,20 @@
 <script lang="ts">
   import SegmentMap from './SegmentMap.svelte';
+  import AfterDownload from './AfterDownload.svelte';
+  import type { PostprocState } from '../lib/postproc-state.svelte';
   import type { AppState } from '../lib/app-state.svelte';
   import { formatBytes, formatSpeed } from '../lib/format';
   import { stripCells, stripKind } from '../lib/strip';
   import type { PriorityName } from '../lib/types';
 
-  let { app }: { app: AppState } = $props();
+  let { app, post }: { app: AppState; post?: PostprocState } = $props();
+
+  let hash = $state('');
+  async function saveHash(e: SubmitEvent, id: number) {
+    e.preventDefault();
+    if (!post) return;
+    if (await post.setHash(id, hash.trim() || null)) hash = '';
+  }
 
   const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
@@ -93,6 +102,9 @@
         </div>
       {/if}
     </div>
+    {#if post && d.packageId === null}
+      <AfterDownload {post} run={post.byDownload(d.id)} files={[d]} target={{ downloadId: d.id }} />
+    {/if}
     <div class="sec">
       <h3><span>Details</span></h3>
       <dl class="kv">
@@ -116,6 +128,15 @@
           </select>
         </dd>
       </dl>
+      {#if post}
+        <form class="hash" onsubmit={(e) => saveHash(e, d.id)}>
+          <label for="hash">Expected checksum</label>
+          <div class="hrow">
+            <input id="hash" bind:value={hash} placeholder="Paste MD5, SHA-1, SHA-256 or CRC32" autocomplete="off" spellcheck="false" />
+            <button type="submit" class="btn">Save</button>
+          </div>
+        </form>
+      {/if}
     </div>
     <div class="dact">
       <button type="button" class="btn" disabled={d.state === 'completed'} onclick={() => app.toggle(d.id)}>
@@ -134,6 +155,9 @@
         <span class="num">{formatBytes(pkgInfo.done)} / {formatBytes(pkgInfo.total)}</span>
       </div>
     </div>
+    {#if post}
+      <AfterDownload {post} run={post.byPackage(pkg.id)} files={kids} target={{ packageId: pkg.id }} />
+    {/if}
     <div class="dact">
       {#if pkgInfo.moving}
         <button type="button" class="btn" onclick={() => app.toggleIds(kids)}>Pause all</button>
@@ -171,4 +195,11 @@
   .dact { padding: 16px 20px; display: flex; gap: 8px; flex-wrap: wrap; }
   .btn:disabled { opacity: 0.5; cursor: default; }
   .hint { padding: 24px 20px; color: var(--ink-3); font-size: 13px; }
+  .hash { margin-top: 14px; display: grid; gap: 6px; font-size: 12.5px; }
+  .hash label { color: var(--ink-3); }
+  .hrow { display: flex; gap: 8px; }
+  .hrow input {
+    flex: 1; min-width: 0; color: var(--ink); background: var(--raised); border: 1px solid var(--line); border-radius: 5px;
+    padding: 4px 8px; font: 12px var(--mono);
+  }
 </style>

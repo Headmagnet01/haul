@@ -19,3 +19,4 @@ Thumbs.db
 # Playwright
 app/test-results/
 app/playwright-report/
+!crates/engine/tests/fixtures/archives/*.zip

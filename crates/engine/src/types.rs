@@ -99,7 +99,7 @@ impl LinkStatus {
 }
 
 /// What a probe learned about a link.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct ProbeInfo {
     pub final_url: String,
     pub size: Option<u64>,
@@ -108,6 +108,9 @@ pub struct ProbeInfo {
     pub etag: Option<String>,
     pub last_modified: Option<String>,
     pub content_type: Option<String>,
+    /// The server's digest of the whole file, as `"<algo>:<lowercase hex>"`.
+    #[serde(default)]
+    pub digest: Option<String>,
 }
 
 /// Events the engine broadcasts to the UI.
@@ -137,6 +140,10 @@ pub enum Event {
     AllDone,
     /// Collector links were added, checked, started or removed.
     CollectorChanged,
+    /// A post-processing run changed (state, a step, or where its files are).
+    PostProcChanged {
+        run_id: i64,
+    },
 }
 
 #[cfg(test)]
