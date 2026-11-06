@@ -39,6 +39,7 @@ impl Batcher {
             Event::Removed { .. } => self.resync = true,
             Event::CollectorChanged => self.collector = true,
             Event::AllDone => {}
+            Event::PostProcChanged { .. } => {}
         }
     }
 

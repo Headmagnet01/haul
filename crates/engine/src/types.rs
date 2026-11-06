@@ -140,6 +140,10 @@ pub enum Event {
     AllDone,
     /// Collector links were added, checked, started or removed.
     CollectorChanged,
+    /// A post-processing run changed (state, a step, or where its files are).
+    PostProcChanged {
+        run_id: i64,
+    },
 }
 
 #[cfg(test)]
