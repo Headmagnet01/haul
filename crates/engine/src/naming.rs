@@ -108,6 +108,15 @@ pub fn filename_from(content_disposition: Option<&str>, url: &url::Url) -> Strin
 }
 
 fn numbered(file_name: &str, n: u32) -> String {
+    // A volume of a multi-part archive keeps its set suffix, so `split.7z.001` becomes
+    // `split (1).7z.001` and still belongs with `split (1).7z.002`.
+    if let Some(p) = crate::grabber::grouping::archive_part(file_name)
+        && file_name.len() > p.base.len()
+        && file_name.is_char_boundary(p.base.len())
+        && file_name[..p.base.len()] == p.base
+    {
+        return format!("{} ({n}){}", p.base, &file_name[p.base.len()..]);
+    }
     match file_name.rfind('.').filter(|&i| i > 0) {
         Some(i) => format!("{} ({n}){}", &file_name[..i], &file_name[i..]),
         None => format!("{file_name} ({n})"),
@@ -153,6 +162,19 @@ pub fn part_path(dir: &Path, file_name: &str, id: DownloadId) -> PathBuf {
 mod tests {
     use super::*;
     use url::Url;
+
+    #[test]
+    fn numbered_archive_volumes_stay_in_their_set() {
+        // Found by the plan-4 smoke run: "split.7z (1).001" is no longer a volume of "split (1)".
+        assert_eq!(numbered("split.7z.001", 1), "split (1).7z.001");
+        assert_eq!(numbered("movie.part2.rar", 3), "movie (3).part2.rar");
+        assert_eq!(numbered("set.r00", 1), "set (1).r00");
+        assert_eq!(numbered("pack.z01", 2), "pack (2).z01");
+        assert_eq!(numbered("report.pdf", 1), "report (1).pdf");
+        assert_eq!(numbered("noext", 1), "noext (1)");
+        let p = crate::grabber::grouping::archive_part(&numbered("split.7z.002", 1)).unwrap();
+        assert_eq!((p.base.as_str(), p.part), ("split (1)", 2));
+    }
 
     #[test]
     fn reserve_unique_dir_counts() {

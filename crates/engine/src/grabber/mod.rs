@@ -282,6 +282,14 @@ impl Grabber {
         let state = self.state()?;
         let packages: HashMap<&str, &CollectorPackage> = state.packages.iter().map(|p| (p.key.as_str(), p)).collect();
         let mut made: HashMap<String, PackageId> = HashMap::new();
+        // The names each collector package is about to queue (an archive set reuses its Queue package only
+        // when none of these is already in it).
+        let mut names_by_key: HashMap<&str, Vec<&str>> = HashMap::new();
+        for l in state.links.iter().filter(|l| wanted.contains(&l.id)) {
+            if let Some(k) = l.package_key.as_deref() {
+                names_by_key.entry(k).or_default().push(l.name.as_str());
+            }
+        }
         let mut started = Vec::new();
         for l in &state.links {
             if !wanted.contains(&l.id) || matches!(l.status, LinkStatus::Offline | LinkStatus::Expired) {
@@ -292,7 +300,8 @@ impl Grabber {
                 Some(key) => Some(match made.get(key) {
                     Some(&id) => id,
                     None => {
-                        let id = self.package_for(key, l.batch_id, packages.get(key).copied())?;
+                        let names = names_by_key.get(key).map_or(&[][..], Vec::as_slice);
+                        let id = self.package_for(key, l.batch_id, packages.get(key).copied(), names)?;
                         made.insert(key.to_string(), id);
                         id
                     }
@@ -320,12 +329,30 @@ impl Grabber {
         Ok(started.len())
     }
 
-    /// The Queue package a collector package became, created on its first start.
-    fn package_for(&self, key: &str, batch_id: i64, pkg: Option<&CollectorPackage>) -> Result<PackageId, EngineError> {
+    /// The Queue package a collector package became, created on its first start. An archive set joins
+    /// the package its earlier parts went to, unless that package already holds one of `names`
+    /// (then this is the same set downloaded again, and it gets a package of its own).
+    fn package_for(
+        &self,
+        key: &str,
+        batch_id: i64,
+        pkg: Option<&CollectorPackage>,
+        names: &[&str],
+    ) -> Result<PackageId, EngineError> {
         let (name, source) = pkg.map_or(("Pasted list", "paste"), |p| (p.name.as_str(), p.source.as_str()));
         if let Some(set) = key.strip_prefix(ARCHIVE_KEY) {
             if let Some(id) = self.store.archive_package(set)? {
-                return Ok(id);
+                let held: HashSet<String> = self
+                    .store
+                    .list_downloads()?
+                    .into_iter()
+                    .filter(|d| d.package_id == Some(id))
+                    .filter_map(|d| d.file_name.or(d.probe.map(|p| p.file_name)))
+                    .map(|n| n.to_lowercase())
+                    .collect();
+                if !names.iter().any(|n| held.contains(&n.to_lowercase())) {
+                    return Ok(id);
+                }
             }
             let id = self.store.create_package(name, source)?;
             self.store.set_archive_package(set, id)?;

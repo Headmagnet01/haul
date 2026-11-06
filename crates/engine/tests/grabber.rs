@@ -383,6 +383,29 @@ async fn archive_parts_from_separate_intakes_join() {
 }
 
 #[tokio::test]
+async fn same_set_again_gets_a_new_package() {
+    // Found by the plan-4 smoke run: downloading an archive set a second time joined the first,
+    // finished package, so it was never post-processed.
+    let (p, _) = fake(online, 0);
+    let (g, store) = grabber(p);
+    let q = idle_queue(&store);
+    g.intake(links(&["https://a.org/m.part1.rar", "https://a.org/m.part2.rar"]), "paste").unwrap();
+    let s = wait_until(&g, "online", all_online).await;
+    let ids: Vec<i64> = s.links.iter().map(|l| l.id).collect();
+    assert_eq!(g.start(&ids, &q, &defaults()).unwrap(), 2);
+    g.intake(links(&["https://b.org/m.part1.rar", "https://b.org/m.part2.rar"]), "paste").unwrap();
+    let s = wait_until(&g, "online", all_online).await;
+    let ids: Vec<i64> = s.links.iter().map(|l| l.id).collect();
+    assert_eq!(g.start(&ids, &q, &defaults()).unwrap(), 2);
+    let ds = store.list_downloads().unwrap();
+    assert_eq!(ds.len(), 4);
+    assert_eq!(ds[0].package_id, ds[1].package_id);
+    assert_eq!(ds[2].package_id, ds[3].package_id);
+    assert_ne!(ds[0].package_id, ds[2].package_id, "{ds:?}");
+    q.shutdown().await;
+}
+
+#[tokio::test]
 async fn late_part_joins_started_package() {
     let (p, _) = fake(online, 0);
     let (g, store) = grabber(p);
