@@ -3,6 +3,8 @@
   import Placeholder from './components/Placeholder.svelte';
   import QueueView from './components/QueueView.svelte';
   import CollectorView from './components/CollectorView.svelte';
+  import RulesView from './components/RulesView.svelte';
+  import { createRulesState } from './lib/rules-state.svelte';
   import Toast from './components/Toast.svelte';
   import Drawer from './components/Drawer.svelte';
   import StatusBar from './components/StatusBar.svelte';
@@ -20,6 +22,10 @@
   void app.load();
   void collector.load();
   void post.load();
+  const rules = createRulesState(app.backend, { showToast: (t) => app.showToast(t) });
+  $effect(() => {
+    if (app.view === 'rules') void rules.load();
+  });
 
   const label = $derived(VIEWS.find((v) => v.id === app.view)?.label ?? '');
   const active = $derived(app.snapshot.downloads.filter((d) => d.state !== 'completed' && !app.hidden.has(d.id)).length);
@@ -65,6 +71,8 @@
     <Drawer {app} {post} />
   {:else if app.view === 'collector'}
     <CollectorView c={collector} />
+  {:else if app.view === 'rules'}
+    <RulesView rs={rules} backend={app.backend} />
   {:else}
     <Placeholder title={label} />
   {/if}
