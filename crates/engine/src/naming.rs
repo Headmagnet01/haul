@@ -129,6 +129,21 @@ pub fn reserve_unique_path(dir: &Path, file_name: &str) -> std::io::Result<PathB
     unreachable!()
 }
 
+/// The first of `name`, `name (1)`, `name (2)`... that does not exist in `parent`, created
+/// atomically as an empty folder (a file of that name counts as taken).
+pub fn reserve_unique_dir(parent: &Path, name: &str) -> std::io::Result<PathBuf> {
+    std::fs::create_dir_all(parent)?;
+    for n in 0u32.. {
+        let p = if n == 0 { parent.join(name) } else { parent.join(format!("{name} ({n})")) };
+        match std::fs::create_dir(&p) {
+            Ok(()) => return Ok(p),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e),
+        }
+    }
+    unreachable!()
+}
+
 /// `<dir>/<name>.<id>.haulpart`
 pub fn part_path(dir: &Path, file_name: &str, id: DownloadId) -> PathBuf {
     dir.join(format!("{file_name}.{id}.haulpart"))
@@ -138,6 +153,17 @@ pub fn part_path(dir: &Path, file_name: &str, id: DownloadId) -> PathBuf {
 mod tests {
     use super::*;
     use url::Url;
+
+    #[test]
+    fn reserve_unique_dir_counts() {
+        let t = tempfile::tempdir().unwrap();
+        assert_eq!(reserve_unique_dir(t.path(), "pkg.v2").unwrap(), t.path().join("pkg.v2"));
+        assert_eq!(reserve_unique_dir(t.path(), "pkg.v2").unwrap(), t.path().join("pkg.v2 (1)"));
+        assert_eq!(reserve_unique_dir(t.path(), "pkg.v2").unwrap(), t.path().join("pkg.v2 (2)"));
+        assert!(t.path().join("pkg.v2 (2)").is_dir());
+        std::fs::write(t.path().join("file"), "").unwrap();
+        assert_eq!(reserve_unique_dir(t.path(), "file").unwrap(), t.path().join("file (1)"));
+    }
 
     #[test]
     fn sanitize_replaces_illegal() {

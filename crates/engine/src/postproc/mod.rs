@@ -2,3 +2,5 @@
 
 pub mod checksum;
 pub mod extract;
+pub mod scan;
+pub mod sort;
