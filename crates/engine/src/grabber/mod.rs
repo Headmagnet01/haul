@@ -398,6 +398,7 @@ mod tests {
             etag: None,
             last_modified: None,
             content_type: None,
+            digest: None,
         };
         assert_eq!(outcome(Ok(p.clone())), (LinkStatus::Online, Some(p), None));
         assert_eq!(outcome(Err(EngineError::Offline)), (LinkStatus::Offline, None, Some("404".into())));

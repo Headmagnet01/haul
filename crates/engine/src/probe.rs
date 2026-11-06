@@ -46,6 +46,7 @@ fn info_from(resp: &Response, size: Option<u64>, resumable: bool) -> ProbeInfo {
         etag: header_str(h, header::ETAG),
         last_modified: header_str(h, header::LAST_MODIFIED),
         content_type: header_str(h, header::CONTENT_TYPE),
+        digest: None,
     }
 }
 

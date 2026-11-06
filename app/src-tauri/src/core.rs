@@ -361,6 +361,7 @@ mod tests {
                     etag: None,
                     last_modified: None,
                     content_type: None,
+                    digest: None,
                 })
             })
         })

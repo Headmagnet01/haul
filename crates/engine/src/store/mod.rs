@@ -8,9 +8,11 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 mod collector;
+mod postproc;
 pub use collector::{Batch, CollectorLink};
+pub use postproc::{RuleRowIn, RuleRowOut, RunRow};
 
-const SCHEMA_VERSION: i64 = 3;
+const SCHEMA_VERSION: i64 = 4;
 
 #[derive(Clone)]
 pub struct Store {
@@ -47,6 +49,12 @@ pub struct Download {
     pub error: Option<String>,
     /// UTC, `YYYY-MM-DDTHH:MM:SSZ`.
     pub created_at: String,
+    /// A hash the user pasted, as `"<algo>:<hex>"`.
+    pub expected_hash: Option<String>,
+    /// The server's digest from the probe, as `"<algo>:<hex>"`.
+    pub server_digest: Option<String>,
+    /// How many times a checksum mismatch re-downloaded this file.
+    pub verify_retries: u32,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -59,7 +67,7 @@ pub struct Package {
 
 const DOWNLOAD_COLS: &str = "id, package_id, url, headers_json, state, priority, position, connections, \
     speed_limit, target_dir, file_name, target_path, error, final_url, size, etag, last_modified, \
-    resumable, probe_file_name, content_type, created_at";
+    resumable, probe_file_name, content_type, created_at, expected_hash, server_digest, verify_retries";
 
 fn row_to_download(r: &Row) -> rusqlite::Result<Download> {
     let final_url: Option<String> = r.get(13)?;
@@ -72,6 +80,7 @@ fn row_to_download(r: &Row) -> rusqlite::Result<Download> {
             resumable: r.get::<_, Option<bool>>(17)?.unwrap_or(false),
             file_name: r.get::<_, Option<String>>(18)?.unwrap_or_default(),
             content_type: r.get(19)?,
+            digest: r.get(22)?,
         }),
         None => None,
     };
@@ -92,6 +101,9 @@ fn row_to_download(r: &Row) -> rusqlite::Result<Download> {
         target_path: r.get::<_, Option<String>>(11)?.map(PathBuf::from),
         error: r.get(12)?,
         created_at: r.get(20)?,
+        expected_hash: r.get(21)?,
+        server_digest: r.get(22)?,
+        verify_retries: r.get::<_, i64>(23)? as u32,
     })
 }
 
@@ -116,7 +128,12 @@ impl Store {
         conn.pragma_update(None, "foreign_keys", "ON")?;
         conn.busy_timeout(std::time::Duration::from_secs(5))?;
         let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
-        let migrations = [include_str!("schema.sql"), include_str!("migration_2.sql"), include_str!("migration_3.sql")];
+        let migrations = [
+            include_str!("schema.sql"),
+            include_str!("migration_2.sql"),
+            include_str!("migration_3.sql"),
+            include_str!("migration_4.sql"),
+        ];
         for (i, sql) in migrations.iter().enumerate().skip(version.max(0) as usize) {
             let to = i + 1;
             conn.execute_batch(&format!("BEGIN; {sql} PRAGMA user_version = {to}; COMMIT;"))?;
@@ -189,7 +206,7 @@ impl Store {
     pub fn set_probe(&self, id: DownloadId, p: &ProbeInfo) -> Result<(), EngineError> {
         self.lock().execute(
             "UPDATE downloads SET final_url = ?2, size = ?3, etag = ?4, last_modified = ?5, resumable = ?6, \
-             probe_file_name = ?7, content_type = ?8 WHERE id = ?1",
+             probe_file_name = ?7, content_type = ?8, server_digest = ?9 WHERE id = ?1",
             params![
                 id,
                 p.final_url,
@@ -198,7 +215,8 @@ impl Store {
                 p.last_modified,
                 p.resumable,
                 p.file_name,
-                p.content_type
+                p.content_type,
+                p.digest
             ],
         )?;
         Ok(())
@@ -372,6 +390,7 @@ mod tests {
             etag: Some("\"e\"".into()),
             last_modified: Some("Tue, 01 Jan 2030 00:00:00 GMT".into()),
             content_type: Some("application/octet-stream".into()),
+            digest: None,
         };
         s.set_probe(id, &probe).unwrap();
         let d = s.get_download(id).unwrap();

@@ -21,6 +21,7 @@ fn info(url: &str) -> ProbeInfo {
         etag: None,
         last_modified: None,
         content_type: None,
+        digest: None,
     }
 }
 

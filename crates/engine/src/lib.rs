@@ -9,6 +9,7 @@ pub mod probe;
 pub mod queue;
 pub mod ratelimit;
 pub mod schedule;
+pub mod secret;
 pub mod segmenter;
 pub mod store;
 pub mod transfer;
