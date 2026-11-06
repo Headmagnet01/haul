@@ -1,6 +1,6 @@
 # Haul: handoff
 
-Last updated: 6 Nov 2026. Plans 1 (engine core) and 2 (Tauri shell + Queue UI) are merged into `master`. Plan 3 (Collector + clipboard) is merged into `master` too (`d4208c5`), after its review fixes and a full green rerun.
+Last updated: 6 Nov 2026. Plans 1, 2 and 3 are merged into `master` (plan 3 at `d4208c5`). Plan 4 (post-processing + Rules) is built on branch `feat/post-processing`, all checks green, **not merged**: it waits for the owner's go-ahead.
 
 ## What Haul is
 A free, open-source Windows download manager. It pairs IDM's fast engine and browser capture with JDownloader 2's link collector, packages and auto-extraction, in a calm "dispatch board" interface.
@@ -12,12 +12,12 @@ A free, open-source Windows download manager. It pairs IDM's fast engine and bro
 ## Where things stand
 | | |
 |---|---|
-| Branch | `master`. Plan 3 merged at `d4208c5` (plan 2 at `621d27d`). No Git remote exists. Cut a new branch for plan 4. |
-| Done | Plans 1, 2 and 3, all merged. Plan 3: (`docs/superpowers/plans/2026-11-05-haul-plan-3-collector-clipboard.md`, Tasks 1–8). |
-| Tests | Rust: 162 tests (engine + app). Front end: 57 Vitest unit tests and 39 Playwright e2e tests, run in both light and dark (78 runs), plus 3 real-app smoke tests (last run before the review fixes). Clippy, rustfmt and svelte-check are clean. |
+| Branch | `feat/post-processing` (plan 4, cut from `master` at `eee5505`), not merged. `master` has plans 1–3. No Git remote exists. |
+| Done | Plans 1, 2 and 3 merged. Plan 4 built: `docs/superpowers/plans/2026-11-06-haul-plan-4-post-processing.md`, Tasks 1–10, design in `docs/superpowers/specs/2026-11-06-haul-post-processing-design.md`. |
+| Tests | Rust: 254 tests (engine + app). Front end: 72 Vitest unit tests and 51 Playwright e2e tests, run in both light and dark (102 runs), plus 4 real-app smoke tests (all green on 6 Nov, after the plan-4 fixes). Clippy, rustfmt and svelte-check are clean. |
 | Real-app check | `npm run smoke` (6 Nov): a pasted link goes through the Collector (checked Online, started), then pause at 30%+, resume and complete with a matching SHA-256; removing a running download leaves no ghost; a link copied with `Set-Clipboard` while Watch clipboard is on reaches the Collector marked Clipboard. Graceful window close was not re-checked in this run: the app ran on a desktop the tools could not send window messages to (plan 2 checked it). |
 | Post-review check (6 Nov) | Every check rerun after the review fixes and green: 162 Rust tests, clippy, rustfmt, 57 Vitest, svelte-check, 78 e2e runs and all 3 real-app smoke tests. The owner closed the real app by hand (X) and the log says "Haul exiting: saving downloads". The dev DB is at schema 3, and its `download_dir` setting points at `_tmp/smoke`. |
-| Next | Plan 4: post-processing (verify, extract, sort) and the Rules UI (spec section 5). |
+| Next | The owner decides on merging `feat/post-processing`; then plan 5 (local API, pairing, browser extension; spec section 6). |
 
 ## The app, and how to run it
 - **Real app:** `cd app` and `npx tauri dev`. The window is titled Haul, 1280×800 by default.
@@ -30,7 +30,7 @@ A free, open-source Windows download manager. It pairs IDM's fast engine and bro
 - **Real-app smoke test.** Use three shells:
   1. `node scripts/range-server.mjs 8765`
   2. `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9222 npx tauri dev`
-  3. `npm run smoke` (two tests: a full download with a pause and a SHA-256 check, and removing a running download)
+  3. `npm run smoke` (four tests: a full download with a pause and a SHA-256 check, removing a running download, the clipboard watcher, and a split 7z package that downloads, extracts and sorts)
   - The smoke files go to the app's save folder. Point `download_dir` in the settings table at a scratch folder first, or they land in your Downloads.
 - **Layout of `app/`:**
   - `src-tauri/`: the `haul-app` crate.
@@ -40,6 +40,32 @@ A free, open-source Windows download manager. It pairs IDM's fast engine and bro
     - `commands.rs` and `lib.rs`: Tauri glue.
   - `src/lib/`: pure TypeScript, unit-tested: format, status, strip, model (list building, updates, moves and drops), speeds, keys and sparkline. It also holds `backend*.ts` (the interface, Tauri and the mock) and `app-state.svelte.ts` (all Queue state).
   - `src/components/`: the Svelte views.
+
+## Plan 4: post-processing and Rules (6 Nov 2026)
+- **What happens:** when every download in a package (or a lone download) is complete, a **run** starts: verify → extract → sort → scan → notify. One run at a time; every step's state is saved, so a restart carries on from the first unfinished step. The drawer's "After download" list shows the steps; package rows say Verifying / Extracting / Sorting / Needs password / Needs attention.
+- **Owner decisions:** bundle 7-Zip (WinRAR is paid and RAR-only on the command line; the owner's `Rar.exe` only made test files); auto-process on; archives kept after extracting (a switch recycles them); sort into category folders on.
+- **Where the code is:**
+  - Engine: `rules.rs` (pure: categories, rule matching, rename tokens), `postproc/` (`checksum.rs`, `extract.rs` with `SevenZip`, `sort.rs` moves that never overwrite + Recycle Bin, `scan.rs` Defender, `run.rs` types, `mod.rs` the `PostProc` service), `secret.rs` (DPAPI), `store/postproc.rs` + `migration_4.sql`.
+  - App: commands `postproc_runs`, `postproc_process`, `postproc_retry`, `postproc_password`, `set_expected_hash`, `rules_config`, `set_postproc_settings`, `set_categories`, `set_rules`, `try_rules`, `add_password`, `remove_password`, `order_passwords`; `haul:update` has `postproc: true` when a run changed (the UI reloads runs and the snapshot); notifications via `tauri-plugin-notification`.
+  - UI: `lib/postproc.ts`, `postproc-state.svelte.ts`, `rules.ts`, `rules-state.svelte.ts`, `backend-mock-postproc.ts`; `AfterDownload`, `RulesView`, `RuleEditor`, `CategoryTable`, `PasswordList`.
+- **7-Zip:** 26.05 x64 in `app/src-tauri/resources/7zip/` (`7z.exe`, `7z.dll`, `License.txt`, README with SHA-256s), shipped as a Tauri resource; `tauri dev` falls back to the source-tree copy. Test archives: `crates/engine/tests/fixtures/` (`make-fixtures.ps1` rebuilds them with the bundled 7z and WinRAR's `Rar.exe`).
+- **Settings keys:** `postproc` (`{auto, sortCategories, recycleArchives, virusScan}`, default on/on/off/off) and `categories` (the six defaults until edited). Rules live in the `rules` table, passwords (DPAPI blobs) in `passwords`; the UI only ever sees password ids.
+- **Database:** schema version 4 (runs, passwords, rules; downloads gain `expected_hash`, `server_digest`, `verify_retries`). The dev DB was moved to 4 by the smoke run.
+- **Rulings** (cost if wrong in each):
+  - A switched-off scan shows Skipped "Off", not Done. Cost: one icon.
+  - An extracted folder keeps its own name; rename patterns apply to files. Cost: a rule can't rename an extracted folder.
+  - Checksum files move with the package's archives. Cost: none.
+  - A "needs attention" notification is sent each time a run stops failed or needing a password. Cost: an extra toast per failed retry.
+  - Notifications are sent from Rust, so the window has no notification permission. Cost: one capability line if the UI ever notifies.
+  - The Expected checksum field starts empty (the saved hash isn't sent to the UI). Cost: a saved hash can't be seen.
+  - "Try a file name" previews the saved rules, not an unsaved edit. Cost: save before trying.
+  - `oldstyle.rar/.r00/.r01` fixtures are RAR5 volumes renamed (RAR 7 can't write RAR4). Cost: a real RAR4 old-style set is untested.
+  - The four switches live in the Rules view until a Settings page exists (plan 7).
+- **Bugs found by the new smoke test, each fixed with a failing test first:**
+  - Downloading the same archive set again joined the first, finished package, so it was never post-processed (`same_set_again_gets_a_new_package`). A late missing part still joins its siblings.
+  - A name clash turned `split.7z.001` into `split.7z (1).001`, which is no longer a volume of any set; it is now `split (1).7z.001` (`numbered_archive_volumes_stay_in_their_set`).
+- **Smoke folder:** `_tmp/smoke` holds leftovers from those failing runs (`split.7z (n).00N` in its root). Scratch, safe to clear by hand.
+- **Not checked by eye:** the Rules view was covered by e2e and axe in both themes, but not screenshotted (the browser pane was hidden). The drawer's steps were screenshotted in the mock.
 
 ## Plan 3: the Collector (6 Nov 2026)
 - **How links flow:** clipboard (while Watch clipboard is on), Ctrl+V, drop and the Queue's Add links box all send links to the Collector (`add_links(text, source)`). Each link is checked online, 8 at a time, 20 s timeout. "Start package", a lone row's "Start" or "Start all online" moves links to the Queue.
