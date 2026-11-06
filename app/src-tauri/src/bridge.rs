@@ -13,6 +13,7 @@ pub struct Batcher {
     steals: Vec<StealView>,
     resync: bool,
     collector: bool,
+    postproc: bool,
 }
 
 impl Batcher {
@@ -39,7 +40,7 @@ impl Batcher {
             Event::Removed { .. } => self.resync = true,
             Event::CollectorChanged => self.collector = true,
             Event::AllDone => {}
-            Event::PostProcChanged { .. } => {}
+            Event::PostProcChanged { .. } => self.postproc = true,
         }
     }
 
@@ -54,6 +55,7 @@ impl Batcher {
             && self.steals.is_empty()
             && !self.resync
             && !self.collector
+            && !self.postproc
         {
             return None;
         }
@@ -64,6 +66,7 @@ impl Batcher {
             steals: b.steals,
             resync: b.resync,
             collector: b.collector,
+            postproc: b.postproc,
         })
     }
 }
@@ -108,6 +111,16 @@ mod tests {
 
     fn prog(id: i64, written: u64) -> Event {
         Event::Progress { id, written, size: Some(100), speed_bps: written, segments: vec![(0, written, 100)] }
+    }
+
+    #[test]
+    fn batcher_flags_postproc() {
+        let mut b = Batcher::default();
+        b.push(&Event::PostProcChanged { run_id: 3 });
+        let u = b.take().unwrap();
+        assert!(u.postproc);
+        assert!(!u.collector);
+        assert!(b.take().is_none());
     }
 
     #[test]

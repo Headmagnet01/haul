@@ -1,8 +1,13 @@
 //! App commands as plain methods on `AppCore`, so they test without Tauri.
 
 use crate::dto::{
-    CollectorFilters, CollectorSnapshot, DownloadView, IntakeResult, PackageView, Snapshot, SpeedLimit, StartResult,
+    Category, CollectorFilters, CollectorSnapshot, Destination, DownloadView, IntakeResult, PackageView,
+    PostProcSettings, Rule, RulesConfig, Run, Snapshot, SpeedLimit, StartResult,
 };
+use haul_engine::postproc::extract::SevenZip;
+use haul_engine::postproc::scan::Defender;
+use haul_engine::postproc::sort::RecycleBin;
+use haul_engine::postproc::{Notice, PostProc, PostProcDeps};
 use haul_engine::{
     Download, DownloadState, EngineError, EventBus, Grabber, HostLimiter, Priority, ProbeFn, Queue, RateLimiter,
     Schedule, StartDefaults, Store, TransferConfig, TransferCtx, extract_links, http_prober, naming,
@@ -37,6 +42,7 @@ pub struct AppCore {
     grabber: Grabber,
     clipboard_on: Arc<AtomicBool>,
     download_dir: PathBuf,
+    postproc: PostProc,
 }
 
 fn priority_str(p: Priority) -> &'static str {
@@ -97,8 +103,24 @@ fn display_name(d: &Download) -> String {
 
 impl AppCore {
     /// Opens (or creates) the database at `db_path`. Must run inside a Tokio runtime.
-    pub fn start(db_path: &Path, default_download_dir: PathBuf) -> Result<AppCore, EngineError> {
-        Ok(Self::start_with(Store::open(db_path)?, default_download_dir, None))
+    pub fn start(db_path: &Path, default_download_dir: PathBuf, deps: PostProcDeps) -> Result<AppCore, EngineError> {
+        let prober = http_prober(haul_engine::http_client());
+        Ok(Self::build(Store::open(db_path)?, default_download_dir, None, prober, deps))
+    }
+
+    /// The real post-processing parts: the bundled 7-Zip, the Recycle Bin, Windows Defender.
+    pub fn real_deps(seven_zip: PathBuf, notify: impl Fn(Notice) + Send + Sync + 'static) -> PostProcDeps {
+        PostProcDeps {
+            extractor: Arc::new(SevenZip { exe: seven_zip }),
+            recycler: Arc::new(RecycleBin),
+            scanner: Arc::new(Defender::default()),
+            notify: Arc::new(notify),
+        }
+    }
+
+    /// For tests: the 7-Zip in the source tree and no notifications.
+    fn quiet_deps() -> PostProcDeps {
+        Self::real_deps(haul_engine::postproc::extract::seven_zip_for_tests(), |_| {})
     }
 
     /// `schedule` lets tests keep the queue from ever starting a download.
@@ -113,6 +135,16 @@ impl AppCore {
         default_download_dir: PathBuf,
         schedule: Option<Schedule>,
         prober: ProbeFn,
+    ) -> AppCore {
+        Self::build(store, default_download_dir, schedule, prober, Self::quiet_deps())
+    }
+
+    fn build(
+        store: Store,
+        default_download_dir: PathBuf,
+        schedule: Option<Schedule>,
+        prober: ProbeFn,
+        deps: PostProcDeps,
     ) -> AppCore {
         let limit: SpeedLimit = store
             .get_setting(KEY_SPEED_LIMIT)
@@ -146,7 +178,8 @@ impl AppCore {
         }
         let grabber = Grabber::new(store.clone(), ctx.events.clone(), prober);
         let watch = store.get_setting(KEY_WATCH_CLIPBOARD).ok().flatten().and_then(|v| v.as_bool()).unwrap_or(false);
-        AppCore { store, ctx, queue, grabber, clipboard_on: Arc::new(AtomicBool::new(watch)), download_dir }
+        let postproc = PostProc::start(store.clone(), ctx.events.clone(), queue.clone(), deps, download_dir.clone());
+        AppCore { store, ctx, queue, grabber, clipboard_on: Arc::new(AtomicBool::new(watch)), download_dir, postproc }
     }
 
     pub fn events(&self) -> EventBus {
@@ -312,6 +345,75 @@ impl AppCore {
         })
     }
 
+    pub fn postproc_runs(&self) -> Result<Vec<Run>, EngineError> {
+        self.postproc.runs()
+    }
+
+    pub fn postproc_process(&self, package_id: Option<i64>, download_id: Option<i64>) -> Result<i64, EngineError> {
+        self.postproc.process(package_id, download_id)
+    }
+
+    pub fn postproc_retry(&self, run_id: i64) -> Result<(), EngineError> {
+        self.postproc.retry(run_id)
+    }
+
+    pub fn postproc_password(&self, run_id: i64, password: String, remember: bool) -> Result<(), EngineError> {
+        self.postproc.give_password(run_id, password, remember)
+    }
+
+    pub fn set_expected_hash(&self, id: i64, hash: Option<&str>) -> Result<(), EngineError> {
+        self.postproc.set_expected_hash(id, hash)
+    }
+
+    pub fn rules_config(&self) -> Result<RulesConfig, EngineError> {
+        Ok(RulesConfig {
+            settings: self.postproc.settings(),
+            categories: self.postproc.categories()?,
+            rules: self.postproc.rules()?,
+            passwords: self.postproc.passwords()?,
+        })
+    }
+
+    pub fn set_postproc_settings(&self, s: PostProcSettings) -> Result<(), EngineError> {
+        self.postproc.set_settings(s)
+    }
+
+    pub fn set_categories(&self, c: Vec<Category>) -> Result<(), EngineError> {
+        self.postproc.set_categories(c)
+    }
+
+    pub fn set_rules(&self, r: Vec<Rule>) -> Result<(), EngineError> {
+        self.postproc.set_rules(r)
+    }
+
+    /// Where a file would go under a draft of the rules (nothing is saved).
+    pub fn try_rules(
+        &self,
+        name: &str,
+        host: &str,
+        size: Option<u64>,
+        rules: &[Rule],
+        categories: &[Category],
+        sort: bool,
+    ) -> Result<Destination, EngineError> {
+        let facts =
+            haul_engine::rules::Facts { name, host, size, package: "Package", date: chrono::Local::now().date_naive() };
+        haul_engine::postproc::try_rules(&facts, rules, categories, sort, &self.download_dir)
+            .map_err(EngineError::Invalid)
+    }
+
+    pub fn add_password(&self, pw: &str) -> Result<i64, EngineError> {
+        self.postproc.add_password(pw)
+    }
+
+    pub fn remove_password(&self, id: i64) -> Result<(), EngineError> {
+        self.postproc.remove_password(id)
+    }
+
+    pub fn order_passwords(&self, ids: &[i64]) -> Result<(), EngineError> {
+        self.postproc.order_passwords(ids)
+    }
+
     /// Pauses everything and saves; used on exit.
     pub async fn shutdown(&self) {
         self.queue.shutdown().await;
@@ -472,6 +574,98 @@ mod tests {
         let fresh = core_fake(store, dir.path());
         assert!(fresh.watch_clipboard());
         assert!(fresh.collector_snapshot().unwrap().watch_clipboard);
+    }
+
+    #[tokio::test]
+    async fn rules_config_defaults() {
+        let dir = tempfile::tempdir().unwrap();
+        let c = core(Store::open_in_memory().unwrap(), dir.path());
+        let r = c.rules_config().unwrap();
+        assert_eq!(r.settings, haul_engine::postproc::PostProcSettings::default());
+        assert!(
+            r.settings.auto && r.settings.sort_categories && !r.settings.recycle_archives && !r.settings.virus_scan
+        );
+        assert_eq!(r.categories.len(), 6);
+        assert!(r.rules.is_empty());
+        assert!(r.passwords.is_empty());
+        let v = serde_json::to_value(&r).unwrap();
+        assert_eq!(v["settings"]["sortCategories"], true);
+        assert!(v["categories"][0]["exts"].is_array());
+    }
+
+    fn rule(name: &str, pattern: &str, folder: &str) -> haul_engine::rules::Rule {
+        haul_engine::rules::Rule {
+            id: 0,
+            name: name.into(),
+            enabled: true,
+            matcher: haul_engine::rules::RuleMatch { name: Some(pattern.into()), ..Default::default() },
+            action: haul_engine::rules::RuleAction { folder: Some(folder.into()), rename: None },
+        }
+    }
+
+    #[tokio::test]
+    async fn set_rules_rejects_bad_regex_and_keeps_old() {
+        let dir = tempfile::tempdir().unwrap();
+        let c = core(Store::open_in_memory().unwrap(), dir.path());
+        c.set_rules(vec![rule("ISO", "*.iso", r"Programs\ISO")]).unwrap();
+        let e = c.set_rules(vec![rule("Bad", "/(/", "x")]).unwrap_err();
+        assert!(e.to_string().starts_with("Bad pattern in “Bad”"), "{e}");
+        let rules = c.rules_config().unwrap().rules;
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].name, "ISO");
+    }
+
+    #[tokio::test]
+    async fn try_rules_reports_rule() {
+        let dir = tempfile::tempdir().unwrap();
+        let c = core(Store::open_in_memory().unwrap(), dir.path());
+        let cats = haul_engine::rules::default_categories();
+        let d = c
+            .try_rules(
+                "ubuntu.iso",
+                "releases.ubuntu.com",
+                Some(5),
+                &[rule("ISO", "*.iso", r"Programs\ISO")],
+                &cats,
+                true,
+            )
+            .unwrap();
+        assert_eq!(d.by, "Rule “ISO”");
+        assert_eq!(d.folder, Some(dir.path().join(r"Programs\ISO")));
+        let d = c.try_rules("film.mkv", "", None, &[], &cats, true).unwrap();
+        assert_eq!((d.by.as_str(), d.folder), ("Video", Some(dir.path().join("Video"))));
+        assert!(c.try_rules("a", "", None, &[rule("Bad", "/(/", "x")], &cats, true).is_err());
+    }
+
+    #[tokio::test]
+    async fn password_roundtrip_hides_plaintext() {
+        let dir = tempfile::tempdir().unwrap();
+        let c = core(Store::open_in_memory().unwrap(), dir.path());
+        let id = c.add_password("hunter2-secret").unwrap();
+        let r = c.rules_config().unwrap();
+        assert_eq!(r.passwords, vec![id]);
+        assert!(!serde_json::to_string(&r).unwrap().contains("hunter2-secret"));
+        c.remove_password(id).unwrap();
+        assert!(c.rules_config().unwrap().passwords.is_empty());
+    }
+
+    #[tokio::test]
+    async fn postproc_process_requires_finished() {
+        let dir = tempfile::tempdir().unwrap();
+        let c = core(Store::open_in_memory().unwrap(), dir.path());
+        queue_one(&c);
+        let id = c.snapshot().unwrap().downloads[0].id;
+        assert_eq!(c.postproc_process(None, Some(id)).unwrap_err().to_string(), "Not finished yet");
+        assert!(c.postproc_runs().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn postproc_settings_persist() {
+        let dir = tempfile::tempdir().unwrap();
+        let c = core(Store::open_in_memory().unwrap(), dir.path());
+        let s = haul_engine::postproc::PostProcSettings { virus_scan: true, ..Default::default() };
+        c.set_postproc_settings(s).unwrap();
+        assert!(c.rules_config().unwrap().settings.virus_scan);
     }
 
     #[tokio::test]

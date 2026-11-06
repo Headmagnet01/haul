@@ -90,6 +90,8 @@ pub struct Update {
     pub resync: bool,
     /// The Collector changed: the UI reloads its snapshot.
     pub collector: bool,
+    /// A post-processing run changed: the UI reloads the runs (and the snapshot, as files may have moved).
+    pub postproc: bool,
 }
 
 pub use haul_engine::{CollectedLink, CollectorPackage, IntakeResult};
@@ -124,4 +126,17 @@ pub struct CollectorSnapshot {
 #[serde(rename_all = "camelCase")]
 pub struct StartResult {
     pub started: usize,
+}
+
+pub use haul_engine::postproc::{PostProcSettings, Run};
+pub use haul_engine::rules::{Category, Destination, Rule};
+
+/// Everything the Rules view shows. Saved passwords appear only as ids.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RulesConfig {
+    pub settings: PostProcSettings,
+    pub categories: Vec<Category>,
+    pub rules: Vec<Rule>,
+    pub passwords: Vec<i64>,
 }
