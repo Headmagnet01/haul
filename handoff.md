@@ -13,7 +13,7 @@ A free, open-source Windows download manager. It pairs IDM's fast engine and bro
 | | |
 |---|---|
 | Branch | `master`. Plan 3 merged at `d4208c5` (plan 2 at `621d27d`). No Git remote exists. Cut a new branch for plan 4. |
-| Done | Plans 1, 2 and 3, all merged. Plan 3 is (`docs/superpowers/plans/2026-11-05-haul-plan-3-collector-clipboard.md`, Tasks 1–8). |
+| Done | Plans 1, 2 and 3, all merged. Plan 3: (`docs/superpowers/plans/2026-11-05-haul-plan-3-collector-clipboard.md`, Tasks 1–8). |
 | Tests | Rust: 162 tests (engine + app). Front end: 57 Vitest unit tests and 39 Playwright e2e tests, run in both light and dark (78 runs), plus 3 real-app smoke tests (last run before the review fixes). Clippy, rustfmt and svelte-check are clean. |
 | Real-app check | `npm run smoke` (6 Nov): a pasted link goes through the Collector (checked Online, started), then pause at 30%+, resume and complete with a matching SHA-256; removing a running download leaves no ghost; a link copied with `Set-Clipboard` while Watch clipboard is on reaches the Collector marked Clipboard. Graceful window close was not re-checked in this run: the app ran on a desktop the tools could not send window messages to (plan 2 checked it). |
 | Post-review check (6 Nov) | Every check rerun after the review fixes and green: 162 Rust tests, clippy, rustfmt, 57 Vitest, svelte-check, 78 e2e runs and all 3 real-app smoke tests. The owner closed the real app by hand (X) and the log says "Haul exiting: saving downloads". The dev DB is at schema 3, and its `download_dir` setting points at `_tmp/smoke`. |
