@@ -1,6 +1,6 @@
 # Haul: handoff
 
-Last updated: 6 Nov 2026. Plans 1 (engine core) and 2 (Tauri shell + Queue UI) are merged into `master`. Plan 3 (Collector + clipboard) is built on `feat/collector`: all 8 tasks are done, a fresh reviewer read the whole branch, its Important findings are fixed test-first, and every check is green. Not merged yet.
+Last updated: 6 Nov 2026. Plans 1 (engine core) and 2 (Tauri shell + Queue UI) are merged into `master`. Plan 3 (Collector + clipboard) is merged into `master` too (`d4208c5`), after its review fixes and a full green rerun.
 
 ## What Haul is
 A free, open-source Windows download manager. It pairs IDM's fast engine and browser capture with JDownloader 2's link collector, packages and auto-extraction, in a calm "dispatch board" interface.
@@ -12,12 +12,12 @@ A free, open-source Windows download manager. It pairs IDM's fast engine and bro
 ## Where things stand
 | | |
 |---|---|
-| Branch | `feat/collector`, cut from `master` at `f361f6b` (plan 2 merged at `621d27d`). Not merged yet. No Git remote exists. |
-| Done | Plans 1 and 2 (merged), and plan 3 (`docs/superpowers/plans/2026-11-05-haul-plan-3-collector-clipboard.md`, Tasks 1–8). |
+| Branch | `master`. Plan 3 merged at `d4208c5` (plan 2 at `621d27d`). No Git remote exists. Cut a new branch for plan 4. |
+| Done | Plans 1, 2 and 3, all merged. Plan 3 is (`docs/superpowers/plans/2026-11-05-haul-plan-3-collector-clipboard.md`, Tasks 1–8). |
 | Tests | Rust: 162 tests (engine + app). Front end: 57 Vitest unit tests and 39 Playwright e2e tests, run in both light and dark (78 runs), plus 3 real-app smoke tests (last run before the review fixes). Clippy, rustfmt and svelte-check are clean. |
 | Real-app check | `npm run smoke` (6 Nov): a pasted link goes through the Collector (checked Online, started), then pause at 30%+, resume and complete with a matching SHA-256; removing a running download leaves no ghost; a link copied with `Set-Clipboard` while Watch clipboard is on reaches the Collector marked Clipboard. Graceful window close was not re-checked in this run: the app ran on a desktop the tools could not send window messages to (plan 2 checked it). |
 | Post-review check (6 Nov) | Every check rerun after the review fixes and green: 162 Rust tests, clippy, rustfmt, 57 Vitest, svelte-check, 78 e2e runs and all 3 real-app smoke tests. The owner closed the real app by hand (X) and the log says "Haul exiting: saving downloads". The dev DB is at schema 3, and its `download_dir` setting points at `_tmp/smoke`. |
-| Next | 1. Merge `feat/collector` into `master` (owner's go-ahead). 2. Plan 4: post-processing (verify, extract, sort) and the Rules UI (spec section 5). |
+| Next | Plan 4: post-processing (verify, extract, sort) and the Rules UI (spec section 5). |
 
 ## The app, and how to run it
 - **Real app:** `cd app` and `npx tauri dev`. The window is titled Haul, 1280×800 by default.
@@ -231,4 +231,3 @@ Details and rulings are in `.superpowers/sdd/2026-11-05-haul-plan-1-engine-core/
 - **Mock app preview:** `.claude/launch.json` also has `app-mock` (`npm --prefix app run dev:mock`, port 5174), for the browser pane.
 - **The PowerShell tool is sandboxed:** it sees a different `%APPDATA%` and can't reach the app's windows. Use Bash (or `powershell` called from Bash) for anything touching the real app data, clipboard or windows.
 - **An app started in the background from Bash can't be closed with window messages:** its window isn't visible to the tools, although DevTools on port 9222 works. Close it by hand, or use `taskkill` (crash-like, test data only).
-- **Plan 3's ledger** (every ruling, with its test evidence) is in `.superpowers/sdd/2026-11-05-haul-plan-3-collector-clipboard/progress.md` (git-ignored). Delete it after the merge.
