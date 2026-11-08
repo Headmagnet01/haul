@@ -158,7 +158,12 @@ test('pair_and_capture_a_click', async () => {
 
   const row = haul.locator('[role="row"][data-kind="file"]').filter({ hasText: `ext-${STAMP}` });
   await expect(row).toBeVisible({ timeout: 15_000 });
-  await expect(row).toContainText('Complete', { timeout: 90_000 });
+  // A completed download leaves Queue for Finished (since Plan 6a).
+  await expect(row).toHaveCount(0, { timeout: 90_000 });
+  await haul.getByRole('navigation', { name: 'Views' }).getByRole('button', { name: /Finished/ }).click();
+  const done = haul.getByRole('treegrid', { name: 'Finished downloads' }).locator('[role="row"][data-kind]').filter({ hasText: `ext-${STAMP}` });
+  await expect(done).toHaveCount(1, { timeout: 10_000 });
+  await haul.getByRole('navigation', { name: 'Views' }).getByRole('button', { name: /Queue/ }).click();
   tab.close();
 
   // The browser's own copy was cancelled and erased.

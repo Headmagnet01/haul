@@ -340,7 +340,21 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(50)).await;
         };
         assert_eq!(d.state, DownloadState::Completed, "{d:?}");
-        let path = d.target_path.expect("saved");
+        // Completing starts a post-processing run whose sort step moves the file and saves the
+        // new path, so the row read above may hold a path that is already stale.
+        let deadline = Instant::now() + Duration::from_secs(15);
+        let run = loop {
+            let runs = c.store.list_runs().unwrap();
+            if let Some(r) = runs.into_iter().find(|r| r.download_id == Some(d.id)) {
+                if matches!(r.state.as_str(), "done" | "failed" | "skipped") {
+                    break r;
+                }
+            }
+            assert!(Instant::now() < deadline, "post-processing never finished");
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        };
+        assert_eq!(run.state, "done", "{run:?}");
+        let path = c.store.get_download(d.id).unwrap().target_path.expect("saved");
         assert_eq!(std::fs::metadata(path).unwrap().len(), COOKIE_FILE_LEN as u64);
     }
 
