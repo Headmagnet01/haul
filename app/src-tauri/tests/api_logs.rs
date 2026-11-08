@@ -2,7 +2,7 @@
 
 use chrono::NaiveTime;
 use haul_app_lib::api::pairing::PairGate;
-use haul_app_lib::api::server::start_api;
+use haul_app_lib::api::server::{PairEvent, start_api};
 use haul_app_lib::core::AppCore;
 use haul_engine::{Schedule, Store};
 use std::io::Write;
@@ -40,7 +40,19 @@ async fn capture_log_has_no_secrets() {
     let gate = PairGate::new(Duration::from_secs(5));
     let g = gate.clone();
     let p = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
-    let api = start_api(core, gate, Arc::new(move |_| g.answer(true)), p..=p + 2, None).await.unwrap();
+    let api = start_api(
+        core,
+        gate,
+        Arc::new(move |ev| {
+            if let PairEvent::Asked { n, .. } = ev {
+                g.answer(n, true);
+            }
+        }),
+        p..=p + 2,
+        None,
+    )
+    .await
+    .unwrap();
     let http = haul_engine::http_client();
     let url = |path: &str| format!("http://127.0.0.1:{}{path}", api.port);
     let post = |path: &str, body: serde_json::Value| {

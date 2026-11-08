@@ -50,15 +50,30 @@ impl PairGate {
         Ok(PairTicket { n, rx: Some(rx), inner: self.inner.clone(), timeout: self.timeout })
     }
 
-    /// Answers the waiting request, if there is one. A late answer does nothing.
-    pub fn answer(&self, allow: bool) {
-        if let Some((_, tx)) = lock(&self.inner).waiting.take() {
+    /// Answers request `n`, if it is the one waiting. A late answer, or one meant for another request, does nothing.
+    pub fn answer(&self, n: u64, allow: bool) {
+        let mut g = lock(&self.inner);
+        if g.waiting.as_ref().is_some_and(|(w, _)| *w == n)
+            && let Some((_, tx)) = g.waiting.take()
+        {
             let _ = tx.send(allow);
+        }
+    }
+
+    /// Refuses whatever request is waiting (Haul is shutting down).
+    pub fn deny_waiting(&self) {
+        if let Some((_, tx)) = lock(&self.inner).waiting.take() {
+            let _ = tx.send(false);
         }
     }
 }
 
 impl PairTicket {
+    /// The request's number: the window answers by it.
+    pub fn number(&self) -> u64 {
+        self.n
+    }
+
     /// True only for Allow; Deny, the timeout and a closed dialog are all false.
     pub async fn wait(mut self) -> bool {
         let Some(rx) = self.rx.take() else { return false };
@@ -86,7 +101,7 @@ mod tests {
     async fn allow_resolves_true() {
         let g = PairGate::new(T);
         let t = g.request().unwrap();
-        g.answer(true);
+        g.answer(t.number(), true);
         assert!(t.wait().await);
     }
 
@@ -94,7 +109,7 @@ mod tests {
     async fn deny_resolves_false() {
         let g = PairGate::new(T);
         let t = g.request().unwrap();
-        g.answer(false);
+        g.answer(t.number(), false);
         assert!(!t.wait().await);
     }
 
@@ -118,7 +133,7 @@ mod tests {
     async fn gate_frees_after_answer() {
         let g = PairGate::new(T);
         let t = g.request().unwrap();
-        g.answer(false);
+        g.answer(t.number(), false);
         t.wait().await;
         assert!(g.request().is_ok());
     }
@@ -133,12 +148,33 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn late_answer_is_ignored() {
         let g = PairGate::new(T);
-        let w = tokio::spawn(g.request().unwrap().wait());
+        let t = g.request().unwrap();
+        let old = t.number();
+        let w = tokio::spawn(t.wait());
         tokio::time::advance(Duration::from_secs(61)).await;
         assert!(!w.await.unwrap());
-        g.answer(true);
+        g.answer(old, true);
         let w = tokio::spawn(g.request().unwrap().wait());
         tokio::time::advance(Duration::from_secs(61)).await;
         assert!(!w.await.unwrap(), "a late Allow must not approve the next request");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn answer_for_another_request_is_ignored() {
+        let g = PairGate::new(T);
+        let t = g.request().unwrap();
+        let n = t.number();
+        let w = tokio::spawn(t.wait());
+        g.answer(n + 1, true);
+        tokio::time::advance(Duration::from_secs(61)).await;
+        assert!(!w.await.unwrap(), "an Allow meant for another request approves nothing");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn deny_waiting_refuses_whatever_waits() {
+        let g = PairGate::new(T);
+        let t = g.request().unwrap();
+        g.deny_waiting();
+        assert!(!t.wait().await);
     }
 }

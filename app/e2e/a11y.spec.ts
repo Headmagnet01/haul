@@ -92,7 +92,7 @@ test('drawer_steps_have_no_violations', async ({ page }) => {
 
 test('pairing_dialog_and_browsers_have_no_violations', async ({ page }) => {
   await page.goto('/');
-  await page.evaluate(() => (window as unknown as { __haulMock: { pairRequest(b: string): void } }).__haulMock.pairRequest('Microsoft Edge'));
+  await page.evaluate(() => (window as unknown as { __haulMock: { pairRequest(b: string): number } }).__haulMock.pairRequest('Microsoft Edge'));
   await expect(page.getByRole('alertdialog')).toBeVisible();
   await page.waitForTimeout(300);
   const d = await new AxeBuilder({ page }).include('[role="alertdialog"]').withTags(['wcag2a', 'wcag2aa']).analyze();

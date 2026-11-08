@@ -2,8 +2,10 @@ import { expect, test, type Page } from '@playwright/test';
 
 const QUESTION = 'Allow Microsoft Edge to send downloads to Haul?';
 
+type Mock = { __haulMock: { pairRequest(b: string): number; pairTimeout(): void } };
+
 async function ask(page: Page, browser: string) {
-  await page.evaluate((b) => (window as unknown as { __haulMock: { pairRequest(b: string): void } }).__haulMock.pairRequest(b), browser);
+  await page.evaluate((b) => (window as unknown as Mock).__haulMock.pairRequest(b), browser);
 }
 
 async function openRules(page: Page) {
@@ -49,4 +51,13 @@ test('browser_remove', async ({ page }) => {
   await browsers(page).getByRole('button', { name: 'Remove Microsoft Edge' }).click();
   await expect(browsers(page).getByRole('listitem')).toHaveCount(0);
   await expect(browsers(page)).toContainText('No browsers paired. Install the Haul extension and press Pair in its popup.');
+});
+
+test('dialog_closes_when_request_ends', async ({ page }) => {
+  await page.goto('/');
+  await ask(page, 'Microsoft Edge');
+  const dlg = page.getByRole('alertdialog', { name: QUESTION });
+  await expect(dlg).toBeVisible();
+  await page.evaluate(() => (window as unknown as Mock).__haulMock.pairTimeout());
+  await expect(dlg).toBeHidden();
 });

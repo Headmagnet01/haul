@@ -142,10 +142,10 @@ test('mock_secret_needs_password', async () => {
 test('pair_request_then_allow_adds_client', async () => {
   const b = createMockBackend({ tickMs: 250, demo: false });
   const asked: string[] = [];
-  b.onPairRequest((browser) => asked.push(browser));
-  b.pairRequest('Microsoft Edge');
+  b.onPairRequest((_n, browser) => asked.push(browser));
+  const n = b.pairRequest('Microsoft Edge');
   expect(asked).toEqual(['Microsoft Edge']);
-  await b.pairAnswer(true);
+  await b.pairAnswer(n, true);
   const list = await b.pairedClients();
   expect(list).toHaveLength(1);
   expect(list[0].browser).toBe('Microsoft Edge');
@@ -154,16 +154,34 @@ test('pair_request_then_allow_adds_client', async () => {
 
 test('deny_adds_nothing', async () => {
   const b = createMockBackend({ tickMs: 250, demo: false });
-  b.pairRequest('Google Chrome');
-  await b.pairAnswer(false);
+  const n = b.pairRequest('Google Chrome');
+  await b.pairAnswer(n, false);
   expect(await b.pairedClients()).toEqual([]);
 });
 
 test('remove_paired_client_forgets', async () => {
   const b = createMockBackend({ tickMs: 250, demo: false });
-  b.pairRequest('Google Chrome');
-  await b.pairAnswer(true);
+  const n = b.pairRequest('Google Chrome');
+  await b.pairAnswer(n, true);
   const [c] = await b.pairedClients();
   await b.removePairedClient(c.id);
   expect(await b.pairedClients()).toEqual([]);
+});
+
+test('answer_for_another_request_does_nothing', async () => {
+  const b = createMockBackend({ tickMs: 250, demo: false });
+  const n = b.pairRequest('Google Chrome');
+  await b.pairAnswer(n + 1, true);
+  expect(await b.pairedClients()).toEqual([]);
+});
+
+test('ended_request_is_closed', async () => {
+  const b = createMockBackend({ tickMs: 250, demo: false });
+  const closed: number[] = [];
+  b.onPairClosed((n) => closed.push(n));
+  const n = b.pairRequest('Google Chrome');
+  b.pairTimeout();
+  expect(closed).toEqual([n]);
+  await b.pairAnswer(n, true);
+  expect(await b.pairedClients()).toEqual([]); // a late Allow pairs nothing
 });

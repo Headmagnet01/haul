@@ -43,12 +43,14 @@ export interface Backend {
   addPassword(password: string): Promise<number>;
   removePassword(id: number): Promise<void>;
   orderPasswords(ids: number[]): Promise<void>;
-  /** Answers the waiting pairing request from a browser extension. */
-  pairAnswer(allow: boolean): Promise<void>;
+  /** Answers pairing request `n`. An answer for a request that already ended does nothing. */
+  pairAnswer(n: number, allow: boolean): Promise<void>;
   pairedClients(): Promise<PairedClient[]>;
   removePairedClient(id: number): Promise<void>;
-  /** A browser extension asks to pair. Returns an unsubscribe function. */
-  onPairRequest(cb: (browser: string) => void): () => void;
+  /** A browser extension asks to pair (request `n`). Returns an unsubscribe function. */
+  onPairRequest(cb: (n: number, browser: string) => void): () => void;
+  /** Request `n` ended (answered, timed out, or the browser went away). Returns an unsubscribe function. */
+  onPairClosed(cb: (n: number) => void): () => void;
   /** Returns an unsubscribe function. */
   onUpdate(cb: (u: Update) => void): () => void;
 }
@@ -65,8 +67,9 @@ export function getBackend(): Backend {
     const mock = createMockBackend({ tickMs: 250, demo });
     (window as unknown as { __haulMockCalls: string[] }).__haulMockCalls = mock.calls;
     // e2e tests play the browser extension.
-    (window as unknown as { __haulMock: { pairRequest(b: string): void } }).__haulMock = {
+    (window as unknown as { __haulMock: { pairRequest(b: string): number; pairTimeout(): void } }).__haulMock = {
       pairRequest: (b) => mock.pairRequest(b),
+      pairTimeout: () => mock.pairTimeout(),
     };
     instance = mock;
   } else {

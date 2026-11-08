@@ -48,9 +48,10 @@ export const tauriBackend: Backend = {
   addPassword: (password) => invoke('add_password', { password }),
   removePassword: (id) => invoke('remove_password', { id }),
   orderPasswords: (ids) => invoke('order_passwords', { ids }),
-  pairAnswer: (allow) => invoke('pair_answer', { allow }),
+  pairAnswer: (n, allow) => invoke('pair_answer', { n, allow }),
   pairedClients: () => invoke('paired_clients'),
   removePairedClient: (id) => invoke('remove_paired_client', { id }),
   onUpdate: (cb) => subscribe<Update>('haul:update', cb),
-  onPairRequest: (cb) => subscribe<{ browser: string }>('haul:pair-request', (p) => cb(p.browser)),
+  onPairRequest: (cb) => subscribe<{ n: number; browser: string }>('haul:pair-request', (p) => cb(p.n, p.browser)),
+  onPairClosed: (cb) => subscribe<{ n: number }>('haul:pair-closed', (p) => cb(p.n)),
 };

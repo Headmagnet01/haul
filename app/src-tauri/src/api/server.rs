@@ -24,8 +24,28 @@ const MAX_BODY: usize = 2 * 1024 * 1024;
 const MAX_LINKS: usize = 5000;
 const MAX_BROWSER_NAME: usize = 64;
 
-/// Called with the browser's name when a pairing request starts waiting for the window.
-pub type OnPair = Arc<dyn Fn(String) + Send + Sync>;
+/// What the window hears about pairing requests.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PairEvent {
+    /// Request `n` from `browser` waits for Allow or Deny.
+    Asked { n: u64, browser: String },
+    /// Request `n` is over (answered, timed out, or the browser went away): close its question.
+    Closed { n: u64 },
+}
+
+pub type OnPair = Arc<dyn Fn(PairEvent) + Send + Sync>;
+
+/// Sends `Closed` however the request ends, including when the browser drops the connection.
+struct ClosedOnDrop {
+    n: u64,
+    on_pair: OnPair,
+}
+
+impl Drop for ClosedOnDrop {
+    fn drop(&mut self) {
+        (self.on_pair)(PairEvent::Closed { n: self.n });
+    }
+}
 
 struct Api {
     core: AppCore,
@@ -47,7 +67,7 @@ impl ApiHandle {
     pub fn stop(&self) {
         self.closing.store(true, Ordering::SeqCst);
         // A pairing request waiting on the dialog would hold up the shutdown.
-        self.gate.answer(false);
+        self.gate.deny_waiting();
         self.stop.cancel();
     }
 }
@@ -146,7 +166,9 @@ async fn pair(
         return status_only(StatusCode::TOO_MANY_REQUESTS, "a pairing request is already waiting");
     };
     tracing::info!(browser = %browser, "pairing requested");
-    (api.on_pair)(browser.clone());
+    let n = ticket.number();
+    let _closed = ClosedOnDrop { n, on_pair: api.on_pair.clone() };
+    (api.on_pair)(PairEvent::Asked { n, browser: browser.clone() });
     if !ticket.wait().await {
         tracing::info!(browser = %browser, "pairing refused");
         return status_only(StatusCode::FORBIDDEN, "pairing was refused");

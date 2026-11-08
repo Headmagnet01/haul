@@ -9,7 +9,7 @@ pub mod core;
 pub mod dto;
 
 use crate::api::pairing::PairGate;
-use crate::api::server::{ApiHandle, DEFAULT_PORTS, OnPair, start_api};
+use crate::api::server::{ApiHandle, DEFAULT_PORTS, OnPair, PairEvent, start_api};
 use crate::core::AppCore;
 use std::sync::Arc;
 use std::time::Duration;
@@ -115,13 +115,18 @@ pub fn run() {
             }
             let gate = PairGate::new(PAIR_TIMEOUT);
             let window = app.handle().clone();
-            let on_pair: OnPair = Arc::new(move |browser| {
-                if let Some(w) = window.get_webview_window("main") {
-                    let _ = w.unminimize();
-                    let _ = w.show();
-                    let _ = w.set_focus();
+            let on_pair: OnPair = Arc::new(move |ev| match ev {
+                PairEvent::Asked { n, browser } => {
+                    if let Some(w) = window.get_webview_window("main") {
+                        let _ = w.unminimize();
+                        let _ = w.show();
+                        let _ = w.set_focus();
+                    }
+                    let _ = window.emit("haul:pair-request", serde_json::json!({ "n": n, "browser": browser }));
                 }
-                let _ = window.emit("haul:pair-request", serde_json::json!({ "browser": browser }));
+                PairEvent::Closed { n } => {
+                    let _ = window.emit("haul:pair-closed", serde_json::json!({ "n": n }));
+                }
             });
             let port_file = data_dir.join("api-port");
             let (c, g) = (core.clone(), gate.clone());

@@ -4,22 +4,31 @@
 
   let { backend, onanswered }: { backend: Backend; onanswered: () => void } = $props();
 
-  let browser = $state<string | null>(null);
+  /** The question on screen: request `n` from `browser`. */
+  let asking = $state<{ n: number; browser: string } | null>(null);
+  const browser = $derived(asking?.browser ?? null);
   let allowBtn = $state<HTMLButtonElement | null>(null);
   let denyBtn = $state<HTMLButtonElement | null>(null);
 
   $effect(() =>
-    backend.onPairRequest(async (b) => {
-      browser = b;
+    backend.onPairRequest(async (n, b) => {
+      asking = { n, browser: b };
       await tick();
       allowBtn?.focus();
     }),
   );
+  // The request timed out or the browser went away: the question no longer stands.
+  $effect(() =>
+    backend.onPairClosed((n) => {
+      if (asking?.n === n) asking = null;
+    }),
+  );
 
   async function answer(allow: boolean) {
-    if (browser === null) return;
-    browser = null;
-    await backend.pairAnswer(allow);
+    if (asking === null) return;
+    const { n } = asking;
+    asking = null;
+    await backend.pairAnswer(n, allow);
     onanswered();
   }
 

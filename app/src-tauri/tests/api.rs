@@ -2,7 +2,7 @@
 
 use chrono::NaiveTime;
 use haul_app_lib::api::pairing::PairGate;
-use haul_app_lib::api::server::{ApiHandle, start_api};
+use haul_app_lib::api::server::{ApiHandle, PairEvent, start_api};
 use haul_app_lib::core::AppCore;
 use haul_engine::{Schedule, Store};
 use std::sync::Arc;
@@ -32,9 +32,9 @@ async fn env_with(answer: Option<bool>, timeout: Duration) -> Env {
     let core = AppCore::start_with(Store::open_in_memory().unwrap(), dir.path().to_path_buf(), never());
     let gate = PairGate::new(timeout);
     let g = gate.clone();
-    let on_pair: Arc<dyn Fn(String) + Send + Sync> = Arc::new(move |_browser| {
-        if let Some(a) = answer {
-            g.answer(a);
+    let on_pair: Arc<dyn Fn(PairEvent) + Send + Sync> = Arc::new(move |ev| {
+        if let (PairEvent::Asked { n, .. }, Some(a)) = (ev, answer) {
+            g.answer(n, a);
         }
     });
     let p = free_port();
@@ -296,4 +296,40 @@ async fn stopped_server_answers_503_or_refuses() {
     if let Ok(r) = e.status().send().await {
         assert_eq!(r.status(), 503);
     }
+}
+
+#[tokio::test]
+async fn pair_request_ends_with_closed_event() {
+    let dir = tempfile::tempdir().unwrap();
+    let core = AppCore::start_with(Store::open_in_memory().unwrap(), dir.path().to_path_buf(), never());
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let s = seen.clone();
+    let p = free_port();
+    let api = start_api(
+        core,
+        PairGate::new(Duration::from_millis(300)),
+        Arc::new(move |ev| s.lock().unwrap().push(ev)),
+        p..=p + 2,
+        None,
+    )
+    .await
+    .unwrap();
+    let r = haul_engine::http_client()
+        .post(format!("http://127.0.0.1:{}/v1/pair", api.port))
+        .header("origin", EXT)
+        .header("content-type", "application/json")
+        .body(r#"{"browser":"Google Chrome"}"#)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 403, "unanswered: times out as Deny");
+    let seen = seen.lock().unwrap().clone();
+    let n = match &seen[0] {
+        PairEvent::Asked { n, browser } => {
+            assert_eq!(browser, "Google Chrome");
+            *n
+        }
+        other => panic!("first event should be Asked, got {other:?}"),
+    };
+    assert_eq!(seen[1..], [PairEvent::Closed { n }], "the window is told to close the question");
 }

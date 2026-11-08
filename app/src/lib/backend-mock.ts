@@ -89,13 +89,21 @@ function splitEven(size: number, n: number): Seg[] {
 
 export function createMockBackend(
   opts: { tickMs: number; demo: boolean; checkMs?: number },
-): Backend & { calls: string[]; pairRequest(browser: string): void } {
+): Backend & { calls: string[]; pairRequest(browser: string): number; pairTimeout(): void } {
   const calls: string[] = [];
   // Pairing: one waiting request at a time, like the app.
-  let pairing: string | null = null;
+  let pairing: { n: number; browser: string } | null = null;
+  let nextRequest = 1;
   let nextClient = 1;
   let clients: PairedClient[] = [];
-  const pairListeners = new Set<(browser: string) => void>();
+  const pairListeners = new Set<(n: number, browser: string) => void>();
+  const pairClosedListeners = new Set<(n: number) => void>();
+  const endPairing = () => {
+    if (pairing === null) return;
+    const n = pairing.n;
+    pairing = null;
+    for (const cb of pairClosedListeners) cb(n);
+  };
   const packages: PackageView[] = [];
   let downloads: DownloadView[] = [];
   const sims = new Map<number, Sim>();
@@ -444,15 +452,20 @@ export function createMockBackend(
       return () => listeners.delete(cb);
     },
     pairRequest(browser) {
-      if (pairing !== null) return;
-      pairing = browser;
-      for (const cb of pairListeners) cb(browser);
+      if (pairing !== null) return pairing.n;
+      pairing = { n: nextRequest++, browser };
+      for (const cb of pairListeners) cb(pairing.n, browser);
+      return pairing.n;
     },
-    async pairAnswer(allow) {
+    /** Like the app's 60 s timeout. */
+    pairTimeout() {
+      endPairing();
+    },
+    async pairAnswer(n, allow) {
       rec(`pairAnswer:${allow}`);
-      if (pairing === null) return;
-      if (allow) clients.push({ id: nextClient++, browser: pairing, createdAt: nowIso(), lastSeen: null });
-      pairing = null;
+      if (pairing === null || pairing.n !== n) return;
+      if (allow) clients.push({ id: nextClient++, browser: pairing.browser, createdAt: nowIso(), lastSeen: null });
+      endPairing();
     },
     async pairedClients() {
       rec('pairedClients');
@@ -465,6 +478,10 @@ export function createMockBackend(
     onPairRequest(cb) {
       pairListeners.add(cb);
       return () => pairListeners.delete(cb);
+    },
+    onPairClosed(cb) {
+      pairClosedListeners.add(cb);
+      return () => pairClosedListeners.delete(cb);
     },
   };
 }

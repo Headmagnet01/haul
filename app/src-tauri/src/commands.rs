@@ -202,8 +202,8 @@ pub async fn order_passwords(core: State<'_, AppCore>, ids: Vec<i64>) -> R<()> {
 
 /// The window's answer to the waiting pairing request.
 #[tauri::command]
-pub fn pair_answer(gate: State<'_, PairGate>, allow: bool) {
-    gate.answer(allow);
+pub fn pair_answer(gate: State<'_, PairGate>, n: u64, allow: bool) {
+    gate.answer(n, allow);
 }
 
 #[tauri::command]
