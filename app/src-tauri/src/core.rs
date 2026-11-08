@@ -88,8 +88,20 @@ fn parse_priority(s: &str) -> Result<Priority, EngineError> {
 }
 
 /// Windows' "being used by another process" (`ERROR_SHARING_VIOLATION`, `ERROR_LOCK_VIOLATION`).
+/// The Recycle Bin's copy engine says it its own way: "the source is in use by another process
+/// (0x80270027)" (`COPYENGINE_E_SHARING_VIOLATION_SRC`; `…_DEST` is 0x80270028).
 fn in_use(e: &str) -> bool {
-    e.contains("os error 32") || e.contains("os error 33") || e.contains("being used by another process")
+    let e = e.to_ascii_lowercase();
+    [
+        "os error 32",
+        "os error 33",
+        "being used by another process",
+        "in use by another process",
+        "0x80270027",
+        "0x80270028",
+    ]
+    .iter()
+    .any(|m| e.contains(m))
 }
 
 fn display_name(d: &Download) -> String {
@@ -1168,6 +1180,18 @@ mod tests {
             self.seen.lock().unwrap().extend_from_slice(paths);
             Ok(())
         }
+    }
+
+    /// The real Recycle Bin on a temp file held open with no sharing: its message must read as "in use".
+    #[test]
+    fn locked_file_reports_in_use() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("locked.bin");
+        std::fs::write(&path, b"x").unwrap();
+        let _hold = std::fs::OpenOptions::new().read(true).share_mode(0).open(&path).unwrap();
+        let err = RecycleBin.recycle(std::slice::from_ref(&path)).unwrap_err();
+        assert!(in_use(&err), "not recognised as in use: {err}");
     }
 
     /// One completed download saved at `<dir>/<name>`, written to disk when `on_disk`.
