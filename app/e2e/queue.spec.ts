@@ -5,6 +5,8 @@ const rows = (page: Page) => page.locator('[role="treegrid"] [role="row"][data-k
 const row = (page: Page, text: string | RegExp) => rows(page).filter({ hasText: text });
 
 test('empty_state_shown', async ({ page }) => {
+  // Past the first run (a fresh start shows the welcome instead: welcome.spec.ts).
+  await page.addInitScript(() => sessionStorage.setItem('haul.mock.settings', JSON.stringify({ firstDownloadSeen: true })));
   await page.goto('/');
   await expect(page.getByText('Copy a link or drop one here')).toBeVisible();
   await expect(page.getByText('Press Ctrl+V anywhere to add links.')).toBeVisible();
