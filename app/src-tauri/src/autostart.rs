@@ -22,6 +22,8 @@ pub fn value_name(identifier: &str) -> &'static str {
 }
 const RUN: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
 const APPROVED: &str = r"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run";
+/// `ERROR_UNSUPPORTED_TYPE`: `RegGetValueW` found the value, but not of the type asked for.
+const UNSUPPORTED_TYPE: i32 = 1630;
 
 /// The Run value for `exe`: the path in quotes, then `--hidden`.
 pub fn run_value(exe: &Path) -> String {
@@ -55,7 +57,13 @@ impl Autostart {
     /// Writes the quoted value, and clears a "disabled" mark Task Manager left, so the switch works.
     pub fn enable(&self, exe: &Path) -> io::Result<()> {
         self.write_run(exe)?;
-        if read_binary(&self.approved, &self.name)?.is_some_and(|b| b.first().is_some_and(|f| f % 2 == 1)) {
+        let disabled = match read_binary(&self.approved, &self.name) {
+            Ok(mark) => mark.is_some_and(|b| b.first().is_some_and(|f| f % 2 == 1)),
+            // Not binary, so not a mark Task Manager wrote: remove it like a "disabled" one.
+            Err(e) if e.raw_os_error() == Some(UNSUPPORTED_TYPE) => true,
+            Err(e) => return Err(e),
+        };
+        if disabled {
             delete_value(&self.approved, &self.name)?;
         }
         Ok(())
@@ -276,6 +284,17 @@ mod tests {
         write_binary(&approved, NAME, &[2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
         s.a.enable(&exe()).unwrap();
         assert!(has_value(&approved, NAME));
+    }
+
+    /// Task Manager's mark is binary; a value of another type is no valid mark and mustn't block the switch.
+    #[test]
+    fn enable_with_wrong_typed_mark() {
+        let s = Scratch::new();
+        let approved = format!(r"{}\StartupApproved\Run", s.root);
+        write_string(&approved, NAME, "x").unwrap();
+        s.a.enable(&exe()).unwrap();
+        assert_eq!(s.a.value().unwrap(), Some(run_value(&exe())));
+        assert!(!has_value(&approved, NAME));
     }
 
     #[test]
