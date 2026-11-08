@@ -75,6 +75,11 @@ struct Marks {
     history: Option<u32>,
 }
 
+/// The DWORD at the start of a clipboard blob, when it holds at least 4 bytes.
+fn dword_from(bytes: &[u8]) -> Option<u32> {
+    Some(u32::from_le_bytes(bytes.get(..4)?.try_into().ok()?))
+}
+
 /// True when the copy asked not to be watched.
 fn private_copy(m: &Marks) -> bool {
     m.exclude || m.viewer_ignore || m.history == Some(0)
@@ -86,7 +91,7 @@ fn clipboard_marks() -> Marks {
     use windows_sys::Win32::System::DataExchange::{
         CloseClipboard, GetClipboardData, IsClipboardFormatAvailable, OpenClipboard, RegisterClipboardFormatW,
     };
-    use windows_sys::Win32::System::Memory::{GlobalLock, GlobalUnlock};
+    use windows_sys::Win32::System::Memory::{GlobalLock, GlobalSize, GlobalUnlock};
     let format = |name: &str| {
         let w: Vec<u16> = name.encode_utf16().chain(std::iter::once(0)).collect();
         // SAFETY: a NUL-terminated name that outlives the call.
@@ -101,14 +106,15 @@ fn clipboard_marks() -> Marks {
         history: None,
     };
     // SAFETY: the clipboard is opened with no owner window and always closed below; the data
-    // handle is only read while locked, and only its first 4 bytes (a DWORD by this format's contract).
+    // handle is read only while locked, and only within the size Windows reports for it.
     if has(history_fmt) && unsafe { OpenClipboard(std::ptr::null_mut()) } != 0 {
         unsafe {
             let h = GetClipboardData(history_fmt);
             if !h.is_null() {
-                let p = GlobalLock(h) as *const u32;
+                let p = GlobalLock(h) as *const u8;
                 if !p.is_null() {
-                    m.history = Some(p.read_unaligned());
+                    let bytes = std::slice::from_raw_parts(p, GlobalSize(h).min(4));
+                    m.history = dword_from(bytes);
                     GlobalUnlock(h);
                 }
             }
@@ -241,6 +247,15 @@ mod tests {
         assert!(f.accept("https://a.org/A").is_some());
         assert!(f.accept("https://a.org/B").is_some());
         assert!(f.accept("https://a.org/A").is_some());
+    }
+
+    /// Any program can put a blob of any size under the history format: read 4 bytes only when there are 4.
+    #[test]
+    fn history_dword_needs_four_bytes() {
+        assert_eq!(dword_from(&[0, 0, 0, 0]), Some(0));
+        assert_eq!(dword_from(&[1, 0, 0, 0, 9]), Some(1));
+        assert_eq!(dword_from(&[0]), None);
+        assert_eq!(dword_from(&[]), None);
     }
 
     #[test]
