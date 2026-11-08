@@ -332,6 +332,13 @@ impl AppCore {
         ids.iter().for_each(|&id| self.queue.remove(id));
     }
 
+    /// Queues every paused download again (the tray's Resume all).
+    pub fn resume_all(&self) {
+        if let Ok(ds) = self.store.list_downloads() {
+            ds.iter().filter(|d| d.state == DownloadState::Paused).for_each(|d| self.queue.resume(d.id));
+        }
+    }
+
     pub fn pause_all(&self) {
         if let Ok(ds) = self.store.list_downloads() {
             ds.iter()
@@ -730,6 +737,20 @@ mod tests {
         queue_one(&c);
         let id = c.snapshot().unwrap().downloads[0].id;
         assert_eq!(c.folder_target(id).unwrap(), FolderTarget::OpenDir(dir.path().to_path_buf()));
+    }
+
+    #[tokio::test]
+    async fn resume_all_requeues_paused_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let c = core(Store::open_in_memory().unwrap(), dir.path());
+        queue_one(&c);
+        queue_one(&c);
+        let ids: Vec<i64> = c.store.list_downloads().unwrap().iter().map(|d| d.id).collect();
+        c.pause_all();
+        c.store.set_state(ids[1], DownloadState::Failed, Some("boom")).unwrap();
+        c.resume_all();
+        let states: Vec<DownloadState> = c.store.list_downloads().unwrap().iter().map(|d| d.state).collect();
+        assert_eq!(states, vec![DownloadState::Queued, DownloadState::Failed]);
     }
 
     fn patch() -> crate::settings::SettingsPatch {

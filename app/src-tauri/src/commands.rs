@@ -29,8 +29,19 @@ pub async fn settings(core: State<'_, AppCore>) -> R<Settings> {
 }
 
 #[tauri::command]
-pub async fn set_settings(core: State<'_, AppCore>, patch: SettingsPatch) -> R<Settings> {
-    blocking(&core, move |c| c.set_settings(patch).map_err(|e| e.to_string())).await
+pub async fn set_settings(app: AppHandle, core: State<'_, AppCore>, patch: SettingsPatch) -> R<Settings> {
+    // Autostart first: if Windows refuses, nothing is saved and the switch stays as it was.
+    if let Some(on) = patch.autostart {
+        use tauri_plugin_autostart::ManagerExt;
+        let a = app.autolaunch();
+        if on { a.enable() } else { a.disable() }.map_err(|e| format!("autostart: {e}"))?;
+    }
+    let limit = patch.speed_limit;
+    let s = blocking(&core, move |c| c.set_settings(patch).map_err(|e| e.to_string())).await?;
+    if limit.is_some() {
+        crate::tray::sync_limit(&app, s.speed_limit.enabled);
+    }
+    Ok(s)
 }
 
 #[tauri::command]

@@ -8,6 +8,7 @@ pub mod commands;
 pub mod core;
 pub mod dto;
 pub mod settings;
+pub mod tray;
 
 use crate::api::pairing::PairGate;
 use crate::api::server::{ApiHandle, DEFAULT_PORTS, OnPair, PairEvent, start_api};
@@ -18,6 +19,19 @@ use std::time::Duration;
 /// How long a pairing request waits for Allow or Deny.
 const PAIR_TIMEOUT: Duration = Duration::from_secs(60);
 use tauri::{Emitter, Manager, RunEvent};
+
+/// The one-time notice that closing the window didn't quit Haul.
+fn notify_tray_hint(app: &tauri::AppHandle) {
+    use tauri_plugin_notification::NotificationExt;
+    let n = app
+        .notification()
+        .builder()
+        .title("Haul is still running")
+        .body("Downloads continue in the tray. Right-click the tray icon to quit.");
+    if let Err(e) = n.show() {
+        tracing::warn!(error = %e, "tray notice failed");
+    }
+}
 
 /// Keeps the log writer alive for the life of the app.
 struct LogGuard(#[allow(dead_code)] tracing_appender::non_blocking::WorkerGuard);
@@ -50,6 +64,12 @@ fn seven_zip_path(app: &tauri::App) -> std::path::PathBuf {
 
 pub fn run() {
     let app = tauri::Builder::default()
+        // First, so a second launch hands over before anything else starts.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| crate::tray::show_main(app)))
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            Some(vec!["--hidden"]),
+        ))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init())
@@ -88,6 +108,23 @@ pub fn run() {
             commands::paired_clients,
             commands::remove_paired_client,
         ])
+        .on_window_event(|w, e| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = e {
+                let app = w.app_handle();
+                let Some(core) = app.try_state::<AppCore>() else { return };
+                let s = core.settings();
+                if !s.close_to_tray {
+                    return;
+                }
+                api.prevent_close();
+                let _ = w.hide();
+                if !s.tray_hint_shown {
+                    crate::notify_tray_hint(app);
+                    let patch = crate::settings::SettingsPatch { tray_hint_shown: Some(true), ..Default::default() };
+                    let _ = core.set_settings(patch);
+                }
+            }
+        })
         .setup(|app| {
             if let Some(g) = app.path().app_log_dir().ok().and_then(|d| init_logging(&d)) {
                 app.manage(g);
@@ -141,8 +178,15 @@ pub fn run() {
                 }
                 Err(e) => tracing::warn!(error = %e, "local API not started; the browser extension can't reach Haul"),
             }
+            if let Err(e) = crate::tray::build_tray(app.handle(), &core) {
+                tracing::warn!(error = %e, "tray icon not created");
+            }
             app.manage(gate);
             app.manage(core);
+            let args: Vec<String> = std::env::args().collect();
+            if !crate::tray::starts_hidden(&args) {
+                crate::tray::show_main(app.handle());
+            }
             Ok(())
         })
         .build(tauri::generate_context!())
