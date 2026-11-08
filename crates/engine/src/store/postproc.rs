@@ -189,7 +189,7 @@ mod tests {
 
     #[test]
     fn schema_version_is_4() {
-        assert_eq!(Store::open_in_memory().unwrap().schema_version().unwrap(), 4);
+        assert_eq!(Store::open_in_memory().unwrap().schema_version().unwrap(), 5);
     }
 
     #[test]
@@ -212,7 +212,7 @@ mod tests {
             .unwrap();
         }
         let s = Store::open(&path).unwrap();
-        assert_eq!(s.schema_version().unwrap(), 4);
+        assert_eq!(s.schema_version().unwrap(), 5);
         let d = &s.list_downloads().unwrap()[0];
         assert_eq!(d.file_name.as_deref(), Some("a"));
         assert_eq!(d.verify_retries, 0);

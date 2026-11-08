@@ -66,6 +66,8 @@ pub struct Spec {
     pub corrupt: bool,
     /// Like `corrupt`, but only for this many GETs; each one served counts down.
     pub corrupt_first_gets: u32,
+    /// Every request without this exact header (name, value) gets 401.
+    pub require_header: Option<(String, String)>,
 }
 
 impl Spec {
@@ -196,6 +198,11 @@ async fn handle(State(s): State<Arc<Srv>>, method: Method, headers: HeaderMap) -
     };
     if let Some(code) = spec.status {
         return StatusCode::from_u16(code).unwrap().into_response();
+    }
+    if let Some((name, value)) = &spec.require_header
+        && headers.get(name.as_str()).and_then(|v| v.to_str().ok()) != Some(value.as_str())
+    {
+        return StatusCode::UNAUTHORIZED.into_response();
     }
     let is_head = method == Method::HEAD;
     if is_head && !spec.head_allowed {

@@ -12,7 +12,7 @@ mod postproc;
 pub use collector::{Batch, CollectorLink};
 pub use postproc::{RuleRowIn, RuleRowOut, RunRow};
 
-const SCHEMA_VERSION: i64 = 4;
+const SCHEMA_VERSION: i64 = 5;
 
 #[derive(Clone)]
 pub struct Store {
@@ -65,7 +65,7 @@ pub struct Package {
     pub created_at: String,
 }
 
-const DOWNLOAD_COLS: &str = "id, package_id, url, headers_json, state, priority, position, connections, \
+const DOWNLOAD_COLS: &str = "id, package_id, url, headers_blob, state, priority, position, connections, \
     speed_limit, target_dir, file_name, target_path, error, final_url, size, etag, last_modified, \
     resumable, probe_file_name, content_type, created_at, expected_hash, server_digest, verify_retries";
 
@@ -89,7 +89,7 @@ fn row_to_download(r: &Row) -> rusqlite::Result<Download> {
         id: r.get(0)?,
         package_id: r.get(1)?,
         url: r.get(2)?,
-        headers_json: r.get(3)?,
+        headers_json: open_headers(r.get(3)?),
         probe,
         state: DownloadState::parse(&state).unwrap_or(DownloadState::Failed),
         priority: Priority::from_i64(r.get(5)?),
@@ -105,6 +105,22 @@ fn row_to_download(r: &Row) -> rusqlite::Result<Download> {
         server_digest: r.get(22)?,
         verify_retries: r.get::<_, i64>(23)? as u32,
     })
+}
+
+/// Request headers are only ever stored encrypted for the current Windows user.
+fn seal_headers(json: Option<&str>) -> Result<Option<Vec<u8>>, EngineError> {
+    json.map(|j| crate::secret::protect(j.as_bytes())).transpose()
+}
+
+fn open_headers(blob: Option<Vec<u8>>) -> Option<String> {
+    let blob = blob?;
+    match crate::secret::unprotect(&blob) {
+        Ok(plain) => String::from_utf8(plain).ok(),
+        Err(e) => {
+            tracing::warn!(error = %e, "stored request headers could not be decrypted; ignoring them");
+            None
+        }
+    }
 }
 
 fn path_str(p: &Path) -> String {
@@ -133,6 +149,7 @@ impl Store {
             include_str!("migration_2.sql"),
             include_str!("migration_3.sql"),
             include_str!("migration_4.sql"),
+            include_str!("migration_5.sql"),
         ];
         for (i, sql) in migrations.iter().enumerate().skip(version.max(0) as usize) {
             let to = i + 1;
@@ -170,13 +187,13 @@ impl Store {
     pub fn insert_download(&self, d: &NewDownload) -> Result<DownloadId, EngineError> {
         let c = self.lock();
         c.execute(
-            "INSERT INTO downloads (package_id, url, headers_json, priority, position, connections, \
+            "INSERT INTO downloads (package_id, url, headers_blob, priority, position, connections, \
              speed_limit, target_dir, file_name) \
              VALUES (?1, ?2, ?3, ?4, (SELECT COALESCE(MAX(position), 0) + 1 FROM downloads), ?5, ?6, ?7, ?8)",
             params![
                 d.package_id,
                 d.url,
-                d.headers_json,
+                seal_headers(d.headers_json.as_deref())?,
                 d.priority.as_i64(),
                 d.connections.clamp(1, 32) as i64,
                 d.speed_limit.map(|v| v as i64),
@@ -228,10 +245,29 @@ impl Store {
         Ok(())
     }
 
+    /// A download that failed for good forgets its request headers.
     pub fn set_state(&self, id: DownloadId, s: DownloadState, error: Option<&str>) -> Result<(), EngineError> {
-        self.lock()
-            .execute("UPDATE downloads SET state = ?2, error = ?3 WHERE id = ?1", params![id, s.as_str(), error])?;
+        let wipe = s == DownloadState::Failed;
+        self.lock().execute(
+            "UPDATE downloads SET state = ?2, error = ?3,              headers_blob = CASE WHEN ?4 THEN NULL ELSE headers_blob END WHERE id = ?1",
+            params![id, s.as_str(), error, wipe],
+        )?;
         Ok(())
+    }
+
+    /// Replaces a download's request headers (a fresh capture from the browser).
+    pub fn refresh_headers(&self, id: DownloadId, headers_json: Option<&str>) -> Result<(), EngineError> {
+        let blob = seal_headers(headers_json)?;
+        self.lock().execute("UPDATE downloads SET headers_blob = ?2 WHERE id = ?1", params![id, blob])?;
+        Ok(())
+    }
+
+    /// Every download of exactly this URL, newest first.
+    pub fn find_by_url(&self, url: &str) -> Result<Vec<Download>, EngineError> {
+        let c = self.lock();
+        let mut st = c.prepare(&format!("SELECT {DOWNLOAD_COLS} FROM downloads WHERE url = ?1 ORDER BY id DESC"))?;
+        let rows = st.query_map([url], row_to_download)?.collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
     }
 
     /// Queued -> Running in one step. False if the row is in any other state or gone,
@@ -246,7 +282,7 @@ impl Store {
 
     pub fn set_completed(&self, id: DownloadId, path: &Path) -> Result<(), EngineError> {
         self.lock().execute(
-            "UPDATE downloads SET state = ?2, error = NULL, target_path = ?3 WHERE id = ?1",
+            "UPDATE downloads SET state = ?2, error = NULL, target_path = ?3, headers_blob = NULL WHERE id = ?1",
             params![id, DownloadState::Completed.as_str(), path_str(path)],
         )?;
         Ok(())
@@ -542,5 +578,70 @@ mod tests {
         s.set_setting("k", &serde_json::json!({"a": 1})).unwrap();
         s.set_setting("k", &serde_json::json!(2)).unwrap();
         assert_eq!(s.get_setting("k").unwrap(), Some(serde_json::json!(2)));
+    }
+
+    #[test]
+    fn schema_version_is_5() {
+        assert_eq!(Store::open_in_memory().unwrap().schema_version().unwrap(), 5);
+    }
+
+    #[test]
+    fn headers_are_stored_encrypted() {
+        let s = Store::open_in_memory().unwrap();
+        let mut n = nd(Priority::Normal);
+        n.headers_json = Some(r#"{"Cookie":"sid=abc"}"#.into());
+        let id = s.insert_download(&n).unwrap();
+        let (plain, blob): (Option<String>, Option<Vec<u8>>) = s
+            .lock()
+            .query_row("SELECT headers_json, headers_blob FROM downloads WHERE id = ?1", [id], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })
+            .unwrap();
+        assert_eq!(plain, None);
+        let blob = blob.expect("a blob");
+        assert!(!blob.windows(7).any(|w| w == b"sid=abc"));
+        assert_eq!(s.get_download(id).unwrap().headers_json.as_deref(), Some(r#"{"Cookie":"sid=abc"}"#));
+    }
+
+    #[test]
+    fn headers_wiped_on_complete() {
+        let s = Store::open_in_memory().unwrap();
+        let id = s.insert_download(&nd(Priority::Normal)).unwrap();
+        s.set_completed(id, std::path::Path::new(r"C:\dl\a.bin")).unwrap();
+        assert_eq!(s.get_download(id).unwrap().headers_json, None);
+    }
+
+    #[test]
+    fn headers_wiped_on_failed_kept_on_pause() {
+        let s = Store::open_in_memory().unwrap();
+        let id = s.insert_download(&nd(Priority::Normal)).unwrap();
+        for st in [DownloadState::Paused, DownloadState::LinkExpired, DownloadState::Offline] {
+            s.set_state(id, st, None).unwrap();
+            assert!(s.get_download(id).unwrap().headers_json.is_some(), "{st:?} keeps headers");
+        }
+        s.set_state(id, DownloadState::Failed, Some("boom")).unwrap();
+        assert_eq!(s.get_download(id).unwrap().headers_json, None);
+    }
+
+    #[test]
+    fn refresh_headers_replaces() {
+        let s = Store::open_in_memory().unwrap();
+        let id = s.insert_download(&nd(Priority::Normal)).unwrap();
+        s.refresh_headers(id, Some(r#"{"Cookie":"new"}"#)).unwrap();
+        assert_eq!(s.get_download(id).unwrap().headers_json.as_deref(), Some(r#"{"Cookie":"new"}"#));
+        s.refresh_headers(id, None).unwrap();
+        assert_eq!(s.get_download(id).unwrap().headers_json, None);
+    }
+
+    #[test]
+    fn find_by_url_newest_first() {
+        let s = Store::open_in_memory().unwrap();
+        let a = s.insert_download(&nd(Priority::Normal)).unwrap();
+        let b = s.insert_download(&nd(Priority::Normal)).unwrap();
+        let mut other = nd(Priority::Normal);
+        other.url = "https://example.org/other.bin".into();
+        s.insert_download(&other).unwrap();
+        let ids: Vec<_> = s.find_by_url("https://example.org/a.bin").unwrap().iter().map(|d| d.id).collect();
+        assert_eq!(ids, vec![b, a]);
     }
 }

@@ -418,3 +418,54 @@ async fn stalled_connections_replaced() {
     let out = tokio::time::timeout(Duration::from_secs(5), run(&c, id)).await.expect("stalled past 5 s");
     assert_file_eq(&completed(out), len);
 }
+
+fn add_with_headers(ctx: &TransferCtx, url: &str, dir: &Path, headers: &str) -> DownloadId {
+    ctx.store
+        .insert_download(&NewDownload {
+            package_id: None,
+            url: url.to_string(),
+            headers_json: Some(headers.to_string()),
+            target_dir: dir.to_path_buf(),
+            file_name: None,
+            priority: Priority::Normal,
+            connections: 4,
+            speed_limit: None,
+        })
+        .unwrap()
+}
+
+#[tokio::test]
+async fn cookie_sent_on_probe_and_connections() {
+    let len = 4 * MIB as usize;
+    let mut spec = Spec::new(len);
+    spec.require_header = Some(("cookie".into(), "sid=abc".into()));
+    let srv = serve(spec).await;
+    let dir = tempfile::tempdir().unwrap();
+    let c = ctx(16, TransferConfig::for_tests());
+    let id = add_with_headers(&c, &srv.url, dir.path(), r#"{"Cookie":"sid=abc"}"#);
+    let p = completed(run(&c, id).await);
+    assert_file_eq(&p, len);
+    assert!(srv.requests.load(SeqCst) >= 2, "probe plus at least one GET");
+}
+
+#[tokio::test]
+async fn missing_cookie_gives_link_expired() {
+    let mut spec = Spec::new(100_000);
+    spec.require_header = Some(("cookie".into(), "sid=abc".into()));
+    let srv = serve(spec).await;
+    let dir = tempfile::tempdir().unwrap();
+    let c = ctx(16, TransferConfig::for_tests());
+    let id = add(&c, &srv.url, dir.path(), 4, None);
+    let _ = run(&c, id).await;
+    assert_eq!(c.store.get_download(id).unwrap().state, haul_engine::DownloadState::LinkExpired);
+}
+
+#[tokio::test]
+async fn invalid_header_values_are_dropped() {
+    let srv = serve(Spec::new(100_000)).await;
+    let dir = tempfile::tempdir().unwrap();
+    let c = ctx(16, TransferConfig::for_tests());
+    let id = add_with_headers(&c, &srv.url, dir.path(), "{\"Cookie\":\"a=1\nb=2\",\"Referer\":\"https://x.test/\"}");
+    let p = completed(run(&c, id).await);
+    assert_file_eq(&p, 100_000);
+}

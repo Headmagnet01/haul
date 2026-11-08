@@ -201,7 +201,7 @@ mod tests {
             .unwrap();
         }
         let s = Store::open(&path).unwrap();
-        assert_eq!(s.schema_version().unwrap(), 4);
+        assert_eq!(s.schema_version().unwrap(), 5);
         assert_eq!(s.list_downloads().unwrap()[0].url, "https://example.org/a.bin");
         s.create_batch("paste", "x").unwrap();
     }

@@ -38,7 +38,7 @@ impl EngineError {
     pub fn from_status(code: u16) -> EngineError {
         match code {
             404 => EngineError::Offline,
-            403 | 410 => EngineError::LinkExpired(code),
+            401 | 403 | 410 => EngineError::LinkExpired(code),
             416 => EngineError::RangeNotSatisfiable,
             _ => EngineError::Http(code),
         }

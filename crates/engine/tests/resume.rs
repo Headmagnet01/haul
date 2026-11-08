@@ -262,3 +262,31 @@ async fn disk_full_is_a_pause() {
     }
     assert_eq!(finals, vec![haul_engine::DownloadState::Paused]);
 }
+
+#[tokio::test]
+async fn cookie_sent_on_resume() {
+    let mut spec = Spec::new(LEN);
+    spec.bytes_per_sec = Some(4_000_000);
+    spec.etag = Some("v1".into());
+    spec.require_header = Some(("cookie".into(), "sid=abc".into()));
+    let srv = serve(spec).await;
+    let dir = tempfile::tempdir().unwrap();
+    let c = ctx_on(Store::open_in_memory().unwrap());
+    let id = c
+        .store
+        .insert_download(&NewDownload {
+            package_id: None,
+            url: srv.url.clone(),
+            headers_json: Some(r#"{"Cookie":"sid=abc"}"#.into()),
+            target_dir: dir.path().to_path_buf(),
+            file_name: None,
+            priority: Priority::Normal,
+            connections: 4,
+            speed_limit: None,
+        })
+        .unwrap();
+    assert!(matches!(run_until(&c, id, 0.2).await, TransferOutcome::Paused));
+    assert!(written(&c, id) > 0);
+    let p = completed(run(&c, id).await);
+    assert_file_eq(&p, LEN);
+}
