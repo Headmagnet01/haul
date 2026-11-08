@@ -64,6 +64,65 @@ impl ClipboardFilter {
     }
 }
 
+/// The markers password managers put on a copy so clipboard watchers leave it alone.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct Marks {
+    /// `ExcludeClipboardContentFromMonitorProcessing` is on the clipboard.
+    exclude: bool,
+    /// `Clipboard Viewer Ignore` is on the clipboard (KeePass and others).
+    viewer_ignore: bool,
+    /// The DWORD in `CanIncludeInClipboardHistory`, when present (0 = keep out of history).
+    history: Option<u32>,
+}
+
+/// True when the copy asked not to be watched.
+fn private_copy(m: &Marks) -> bool {
+    m.exclude || m.viewer_ignore || m.history == Some(0)
+}
+
+/// Reads the markers from the real clipboard. Anything unreadable counts as absent.
+#[cfg(windows)]
+fn clipboard_marks() -> Marks {
+    use windows_sys::Win32::System::DataExchange::{
+        CloseClipboard, GetClipboardData, IsClipboardFormatAvailable, OpenClipboard, RegisterClipboardFormatW,
+    };
+    use windows_sys::Win32::System::Memory::{GlobalLock, GlobalUnlock};
+    let format = |name: &str| {
+        let w: Vec<u16> = name.encode_utf16().chain(std::iter::once(0)).collect();
+        // SAFETY: a NUL-terminated name that outlives the call.
+        unsafe { RegisterClipboardFormatW(w.as_ptr()) }
+    };
+    // SAFETY: plain queries on registered format ids.
+    let has = |f: u32| f != 0 && unsafe { IsClipboardFormatAvailable(f) } != 0;
+    let history_fmt = format("CanIncludeInClipboardHistory");
+    let mut m = Marks {
+        exclude: has(format("ExcludeClipboardContentFromMonitorProcessing")),
+        viewer_ignore: has(format("Clipboard Viewer Ignore")),
+        history: None,
+    };
+    // SAFETY: the clipboard is opened with no owner window and always closed below; the data
+    // handle is only read while locked, and only its first 4 bytes (a DWORD by this format's contract).
+    if has(history_fmt) && unsafe { OpenClipboard(std::ptr::null_mut()) } != 0 {
+        unsafe {
+            let h = GetClipboardData(history_fmt);
+            if !h.is_null() {
+                let p = GlobalLock(h) as *const u32;
+                if !p.is_null() {
+                    m.history = Some(p.read_unaligned());
+                    GlobalUnlock(h);
+                }
+            }
+            CloseClipboard();
+        }
+    }
+    m
+}
+
+#[cfg(not(windows))]
+fn clipboard_marks() -> Marks {
+    Marks::default()
+}
+
 struct Watcher {
     core: AppCore,
     filter: ClipboardFilter,
@@ -97,6 +156,10 @@ impl ClipboardHandler for Watcher {
             return CallbackResult::Next;
         }
         std::thread::sleep(READ_DELAY);
+        if private_copy(&clipboard_marks()) {
+            tracing::debug!("clipboard copy marked private: ignored");
+            return CallbackResult::Next;
+        }
         if let Some(text) = self.read_text().and_then(|t| self.filter.accept(&t))
             && let Err(e) = self.core.add_links(&text, "clipboard")
         {
@@ -178,5 +241,15 @@ mod tests {
         assert!(f.accept("https://a.org/A").is_some());
         assert!(f.accept("https://a.org/B").is_some());
         assert!(f.accept("https://a.org/A").is_some());
+    }
+
+    #[test]
+    fn private_copies_are_skipped() {
+        let none = Marks::default();
+        assert!(!private_copy(&none));
+        assert!(private_copy(&Marks { exclude: true, ..none }));
+        assert!(private_copy(&Marks { viewer_ignore: true, ..none }));
+        assert!(private_copy(&Marks { history: Some(0), ..none }));
+        assert!(!private_copy(&Marks { history: Some(1), ..none }));
     }
 }
