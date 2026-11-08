@@ -17,6 +17,19 @@ test('welcome_shows_three_steps', async ({ page }) => {
   await expect(welcome(page).getByRole('button', { name: 'Open the extension folder' })).toBeVisible();
 });
 
+const FF_HELP = 'Drag haul-firefox.xpi onto Firefox, choose Add, then click the Haul button and Pair with Haul.';
+const FF_MISSING = "The Firefox add-on wasn't found. Sign it with npm run sign:firefox in the extension folder.";
+const mockCalls = (page: Page) => page.evaluate(() => (window as unknown as { __haulMockCalls: string[] }).__haulMockCalls);
+
+test('firefox_folder_button', async ({ page }) => {
+  await page.goto('/');
+  await expect(step(page, 2)).toContainText(FF_HELP);
+  // The mock has no signed add-on, like a fresh dev checkout, so the error shows as a toast.
+  await step(page, 2).getByRole('button', { name: 'Open the Firefox add-on folder' }).click();
+  await expect(page.getByText(FF_MISSING)).toBeVisible();
+  expect((await mockCalls(page)).filter((c) => c === 'openFirefoxFolder')).toHaveLength(1);
+});
+
 test('clipboard_switch_ticks_step_two', async ({ page }) => {
   await page.goto('/');
   const sw = step(page, 1).getByRole('switch', { name: 'Watch clipboard' });

@@ -655,6 +655,13 @@ export function createMockBackend(
     async openExtensionFolder() {
       rec('openExtensionFolder');
     },
+    async openFirefoxFolder() {
+      rec('openFirefoxFolder');
+      // Like a dev checkout before signing: there is no haul-firefox.xpi yet.
+      return call(() => {
+        throw "The Firefox add-on wasn't found. Sign it with npm run sign:firefox in the extension folder.";
+      });
+    },
     onShowView(cb) {
       viewListeners.add(cb);
       return () => viewListeners.delete(cb);

@@ -68,6 +68,7 @@ export const tauriBackend: Backend = {
   whenDoneNow: () => invoke('when_done_now'),
   onWhenDone: (cb) => subscribe<WhenDoneStatus>('haul:when-done', cb),
   openExtensionFolder: () => invoke('open_extension_folder'),
+  openFirefoxFolder: () => invoke('open_firefox_folder'),
   onShowView: (cb) => subscribe<string>('haul:show-view', cb),
   onUpdate: (cb) => subscribe<Update>('haul:update', cb),
   updateStatus: () => invoke('update_status'),

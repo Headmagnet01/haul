@@ -65,6 +65,18 @@ test('schedule_on_off', async ({ page }) => {
   await expect(page.getByLabel('Start at', { exact: true })).toBeHidden();
 });
 
+test('browsers_has_both_folder_buttons', async ({ page }) => {
+  await page.goto('/');
+  await openSettings(page);
+  const browsers = region(page, 'Browsers');
+  await browsers.getByRole('button', { name: 'Open the extension folder' }).click();
+  await browsers.getByRole('button', { name: 'Open the Firefox add-on folder' }).click();
+  await expect(page.getByText("The Firefox add-on wasn't found. Sign it with npm run sign:firefox in the extension folder.")).toBeVisible();
+  const calls = await page.evaluate(() => (window as unknown as { __haulMockCalls: string[] }).__haulMockCalls);
+  expect(calls).toContain('openExtensionFolder');
+  expect(calls).toContain('openFirefoxFolder');
+});
+
 test('browsers_listed_in_settings', async ({ page }) => {
   await page.goto('/');
   await page.evaluate(() => (window as unknown as Mock).__haulMock.pairRequest('Microsoft Edge'));

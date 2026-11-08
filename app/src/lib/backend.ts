@@ -78,6 +78,8 @@ export interface Backend {
   onWhenDone(cb: (s: WhenDoneStatus) => void): () => void;
   /** Opens the browser extension's folder in Explorer (for Load unpacked). */
   openExtensionFolder(): Promise<void>;
+  /** Opens the folder holding the signed Firefox add-on (haul-firefox.xpi). */
+  openFirefoxFolder(): Promise<void>;
   /** Haul asks the window to show a view (a click on a notification). Returns an unsubscribe function. */
   onShowView(cb: (view: string) => void): () => void;
   /** The last update check's result, kept in memory by Haul. */

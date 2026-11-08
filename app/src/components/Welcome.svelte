@@ -31,6 +31,14 @@
       app.showToast(typeof e === 'string' ? e : "The extension folder couldn't be opened.");
     }
   }
+
+  async function openFirefox() {
+    try {
+      await app.backend.openFirefoxFolder();
+    } catch (e) {
+      app.showToast(typeof e === 'string' ? e : "The Firefox add-on folder couldn't be opened.");
+    }
+  }
 </script>
 
 {#snippet done(on: boolean)}
@@ -74,10 +82,16 @@
             In Edge or Chrome, open the extensions page, turn on Developer mode, choose Load unpacked and pick
             Haul's extension folder. Then click the Haul button in the toolbar and choose Pair with Haul.
           </p>
+          <p class="s">Drag haul-firefox.xpi onto Firefox, choose Add, then click the Haul button and Pair with Haul.</p>
         {/if}
-        <button type="button" class="btn" onclick={openFolder}>
-          <Icon name="folder" size={14} />Open the extension folder
-        </button>
+        <div class="btns">
+          <button type="button" class="btn" onclick={openFolder}>
+            <Icon name="folder" size={14} />Open the extension folder
+          </button>
+          <button type="button" class="btn" onclick={openFirefox}>
+            <Icon name="folder" size={14} />Open the Firefox add-on folder
+          </button>
+        </div>
       </div>
     </li>
   </ol>
@@ -96,6 +110,7 @@
   .body { display: grid; gap: 6px; justify-items: start; min-width: 0; }
   .t { font: 600 14px var(--sans); color: var(--ink); display: flex; gap: 10px; align-items: center; }
   .s { font-size: 13px; color: var(--ink-2); line-height: 1.45; }
+  .btns { display: flex; flex-wrap: wrap; gap: 8px; }
   .done { display: inline-flex; gap: 4px; align-items: center; font: 500 12px var(--sans); color: var(--ink-2); }
   .done :global(svg) { color: var(--signal); }
   kbd { font: 11px var(--mono); padding: 1px 4px; border: 1px solid var(--line); border-radius: 3px; }

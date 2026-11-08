@@ -162,6 +162,22 @@ pub async fn open_extension_folder(app: AppHandle) -> R<()> {
     app.opener().open_path(shown, None::<&str>).map_err(|e| e.to_string())
 }
 
+/// Opens the folder holding the signed Firefox add-on: the bundled `firefox` folder when installed,
+/// the repository's `extension\firefox` in a dev build. Only a folder with the `.xpi` in it counts.
+#[tauri::command]
+pub async fn open_firefox_folder(app: AppHandle) -> R<()> {
+    use tauri::Manager;
+    let has_xpi = |d: &std::path::Path| d.join("haul-firefox.xpi").is_file();
+    let bundled = app.path().resource_dir().map(|d| d.join("firefox")).ok().filter(|d| has_xpi(d));
+    let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../extension/firefox");
+    let dir = bundled
+        .or_else(|| (cfg!(debug_assertions) && has_xpi(&source)).then_some(source))
+        .ok_or("The Firefox add-on wasn't found. Sign it with npm run sign:firefox in the extension folder.")?;
+    let dir = dir.canonicalize().unwrap_or(dir);
+    let shown = dir.to_string_lossy().trim_start_matches(r"\\?\").to_string();
+    app.opener().open_path(shown, None::<&str>).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub async fn update_status(updater: State<'_, crate::update::Updater>) -> R<crate::update::UpdateStatus> {
     Ok(updater.status())
