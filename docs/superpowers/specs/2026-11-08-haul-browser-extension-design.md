@@ -33,7 +33,7 @@ Haul runs a small HTTP server on `127.0.0.1` (approach A), built with `axum`. Na
 - `axum` server bound to `127.0.0.1`, port 17654. If that port is busy it tries each port up to 17664, and fails with a logged error (the app still runs) if none is free.
 - The chosen port is written to `api-port` in the app data folder.
 - Routes:
-  - `GET /v1/status` → `{ app: "haul", version, paired, active }`. `paired` says whether this caller's key is valid. It needs no key (so the extension can find Haul), but still passes the Host and Origin checks.
+  - `POST /v1/status` → `{ app: "haul", version, paired, active }`. `paired` says whether this caller's key is valid. It needs no key (so the extension can find Haul), but still passes the Host and Origin checks. It is a POST because Chrome sends no `Origin` header on an extension's GET to a host it has permission for (found in the real-browser test).
   - `POST /v1/pair` → `{ browser }` in, `{ token }` out on Allow.
   - `POST /v1/capture` → `{ url, filename?, size?, referrer?, user_agent?, cookies? }` in, `{ id }` out. Queues one download, a lone download with normal priority, in Haul's save folder, and starts it.
   - `POST /v1/links` → `{ links: [...], page_title? }` in, `{ added, skipped }` out. Calls `add_links` with source `browser`.

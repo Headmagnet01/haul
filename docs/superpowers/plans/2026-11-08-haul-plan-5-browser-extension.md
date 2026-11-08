@@ -36,7 +36,7 @@
 - Everything in plans 2–4's Global Constraints still holds (tokens, fonts, motion, icon plus word, never destroy data, test-first).
 - **Port:** `127.0.0.1` only, first free port in `17654..=17664`. The chosen port is written as plain decimal text to `<app data dir>\api-port`.
 - **Routes:**
-  - `GET /v1/status` → `{"app":"haul","version":"<CARGO_PKG_VERSION>","paired":bool,"active":n}`
+  - `POST /v1/status` (a GET carries no Origin from an extension) → `{"app":"haul","version":"<CARGO_PKG_VERSION>","paired":bool,"active":n}`
   - `POST /v1/pair` body `{"browser":string}` → `{"token":"<64 lowercase hex>"}`
   - `POST /v1/capture` body `{"url","filename"?,"size"?,"referrer"?,"user_agent"?,"cookies"?}` → `{"id":n}`
   - `POST /v1/links` body `{"links":[string],"page_title"?}` → `{"added":n,"skipped":n}`

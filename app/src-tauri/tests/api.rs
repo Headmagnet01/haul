@@ -60,6 +60,15 @@ impl Env {
         self.get_from(path, EXT)
     }
 
+    /// Status is a POST: Chrome sends no Origin on an extension's GET to a host it may access.
+    fn status_from(&self, origin: &str) -> reqwest::RequestBuilder {
+        self.http.post(self.url("/v1/status")).header("origin", origin)
+    }
+
+    fn status(&self) -> reqwest::RequestBuilder {
+        self.status_from(EXT)
+    }
+
     fn post_from(&self, path: &str, body: serde_json::Value, origin: &str) -> reqwest::RequestBuilder {
         self.http
             .post(self.url(path))
@@ -96,7 +105,7 @@ fn capture_body() -> serde_json::Value {
 #[tokio::test]
 async fn status_needs_no_token() {
     let e = env().await;
-    let r = e.get("/v1/status").send().await.unwrap();
+    let r = e.status().send().await.unwrap();
     assert_eq!(r.status(), 200);
     let v = json(r).await;
     assert_eq!(v["app"], "haul");
@@ -106,23 +115,30 @@ async fn status_needs_no_token() {
 }
 
 #[tokio::test]
+async fn status_by_get_is_refused() {
+    let e = env().await;
+    let r = e.get("/v1/status").send().await.unwrap();
+    assert_eq!(r.status(), 405);
+}
+
+#[tokio::test]
 async fn wrong_host_is_421() {
     let e = env().await;
-    let r = e.get("/v1/status").header("host", format!("evil.test:{}", e.api.port)).send().await.unwrap();
+    let r = e.status().header("host", format!("evil.test:{}", e.api.port)).send().await.unwrap();
     assert_eq!(r.status(), 421);
 }
 
 #[tokio::test]
 async fn web_origin_is_403() {
     let e = env().await;
-    let r = e.get_from("/v1/status", "https://evil.test").send().await.unwrap();
+    let r = e.status_from("https://evil.test").send().await.unwrap();
     assert_eq!(r.status(), 403);
 }
 
 #[tokio::test]
 async fn missing_origin_is_403() {
     let e = env().await;
-    let r = e.http.get(e.url("/v1/status")).send().await.unwrap();
+    let r = e.http.post(e.url("/v1/status")).send().await.unwrap();
     assert_eq!(r.status(), 403);
 }
 
@@ -142,7 +158,7 @@ async fn pair_allow_returns_token_then_capture_works() {
     let r = e.post("/v1/capture", capture_body()).bearer_auth(&token).send().await.unwrap();
     assert_eq!(r.status(), 200);
     assert!(json(r).await["id"].as_i64().is_some());
-    let r = e.get("/v1/status").bearer_auth(&token).send().await.unwrap();
+    let r = e.status().bearer_auth(&token).send().await.unwrap();
     let v = json(r).await;
     assert_eq!(v["paired"], true);
     assert_eq!(v["active"], 1);
@@ -263,8 +279,8 @@ async fn no_cors_headers() {
     let e = env().await;
     let token = e.pair().await;
     for r in [
-        e.get("/v1/status").send().await.unwrap(),
-        e.get_from("/v1/status", "https://evil.test").send().await.unwrap(),
+        e.status().send().await.unwrap(),
+        e.status_from("https://evil.test").send().await.unwrap(),
         e.post("/v1/capture", capture_body()).bearer_auth(&token).send().await.unwrap(),
     ] {
         assert!(r.headers().get("access-control-allow-origin").is_none());
@@ -277,7 +293,7 @@ async fn stopped_server_answers_503_or_refuses() {
     e.api.stop();
     tokio::time::sleep(Duration::from_millis(100)).await;
     // A refused connection is also fine.
-    if let Ok(r) = e.get("/v1/status").send().await {
+    if let Ok(r) = e.status().send().await {
         assert_eq!(r.status(), 503);
     }
 }

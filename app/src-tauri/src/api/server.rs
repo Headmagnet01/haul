@@ -8,7 +8,7 @@ use axum::extract::{DefaultBodyLimit, Request, State};
 use axum::http::{StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
+use axum::routing::post;
 use axum::{Extension, Json, Router};
 use haul_engine::EngineError;
 use serde::Deserialize;
@@ -222,7 +222,8 @@ pub async fn start_api(
     let closing = Arc::new(AtomicBool::new(false));
     let api = Arc::new(Api { core, gate: gate.clone(), on_pair, port, closing: closing.clone() });
     let app = Router::new()
-        .route("/v1/status", get(status))
+        // A POST, because Chrome sends no Origin header on an extension GET.
+        .route("/v1/status", post(status))
         .route("/v1/pair", post(pair))
         .route("/v1/capture", post(capture))
         .route("/v1/links", post(links))

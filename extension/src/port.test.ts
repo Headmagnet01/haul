@@ -5,8 +5,9 @@ import type { Fetcher } from './api';
 /** A fake network: `answers` maps a port to the status JSON it returns; other ports refuse. */
 function net(answers: Record<number, unknown>) {
   const calls: string[] = [];
-  const fetch: Fetcher = async (url) => {
+  const fetch: Fetcher = async (url, init) => {
     calls.push(url);
+    if (init.method !== 'POST') throw new Error(`status must be a POST (Chrome drops Origin on GET), got ${init.method}`);
     const port = Number(new URL(url).port);
     if (!(port in answers)) throw new TypeError('Failed to fetch');
     return { status: 200, json: async () => answers[port] };

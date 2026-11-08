@@ -105,7 +105,8 @@ export function makeClient(fetch: Fetcher, saved: SavedStore) {
     async status(): Promise<Status> {
       const { token } = await saved.get();
       const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
-      const r = await send('/v1/status', { headers }, CAPTURE_TIMEOUT_MS);
+      // A POST: Chrome sends no Origin on an extension's GET, and Haul requires one.
+      const r = await send('/v1/status', { method: 'POST', headers }, CAPTURE_TIMEOUT_MS);
       if (r === null || r.status !== 200) return { running: false, paired: false, active: 0 };
       const v = (await r.json()) as { paired?: boolean; active?: number };
       return { running: true, paired: !!v.paired, active: Number(v.active ?? 0) };

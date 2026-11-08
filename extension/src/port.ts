@@ -7,7 +7,7 @@ const STATUS_TIMEOUT_MS = 800;
 
 async function isHaul(fetch: Fetcher, port: number): Promise<boolean> {
   try {
-    const r = await withTimeout(STATUS_TIMEOUT_MS, (signal) => fetch(`${base(port)}/v1/status`, { signal }));
+    const r = await withTimeout(STATUS_TIMEOUT_MS, (signal) => fetch(`${base(port)}/v1/status`, { method: 'POST', signal }));
     if (r.status !== 200) return false;
     const v = (await r.json()) as { app?: unknown } | null;
     return typeof v === 'object' && v !== null && v.app === 'haul';

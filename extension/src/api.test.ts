@@ -22,7 +22,10 @@ function haul(live: number | null, capture = 200) {
     calls.push({ url, init });
     const u = new URL(url);
     if (Number(u.port) !== live) throw new TypeError('Failed to fetch');
-    if (u.pathname === '/v1/status') return { status: 200, json: async () => ({ app: 'haul' }) };
+    if (u.pathname === '/v1/status') {
+      if (init.method !== 'POST') throw new Error('status must be a POST');
+      return { status: 200, json: async () => ({ app: 'haul' }) };
+    }
     return { status: capture, json: async () => ({ id: 1 }) };
   };
   return { fetch, calls };
