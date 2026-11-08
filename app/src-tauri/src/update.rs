@@ -39,12 +39,21 @@ pub fn is_newer(current: &str, tag: &str) -> bool {
     matches!((parse(current), parse(tag)), (Some(c), Some(t)) if t > c)
 }
 
-/// `html_url` when it is a page under Haul's own releases, else the releases page.
+/// `html_url` when it is a page under Haul's own releases, else the releases page. The URL is
+/// parsed (so `..` and `%2e%2e` are resolved) and must be https on exactly github.com, with no
+/// user name, under `/meraaki410/haul/releases/`.
 pub fn safe_release_url(html_url: Option<&str>) -> String {
-    match html_url {
-        Some(u) if u.starts_with(&format!("{RELEASES}/")) => u.to_string(),
-        _ => RELEASES.to_string(),
-    }
+    let ours = |raw: &str| {
+        let u = reqwest::Url::parse(raw).ok()?;
+        let ok = u.scheme() == "https"
+            && u.host_str() == Some("github.com")
+            && u.port().is_none()
+            && u.username().is_empty()
+            && u.password().is_none()
+            && u.path().starts_with("/meraaki410/haul/releases/");
+        ok.then(|| u.to_string())
+    };
+    html_url.and_then(ours).unwrap_or_else(|| RELEASES.to_string())
 }
 
 /// True when no check has run yet, the saved time is unreadable, or it is 24 h or more ago.
@@ -120,6 +129,23 @@ pub fn save_last_check(store: &Store, at: DateTime<Utc>) {
     }
 }
 
+/// The setting that keeps a found update across restarts: `{"latest": "X.Y.Z", "url": "https://…"}`.
+pub const KEY_UPDATE_FOUND: &str = "update_found";
+
+/// The saved found update, if any: `(latest, url)`.
+pub fn saved_found(store: &Store) -> Option<(String, String)> {
+    let v = store.get_setting(KEY_UPDATE_FOUND).ok().flatten()?;
+    Some((v.get("latest")?.as_str()?.to_string(), v.get("url")?.as_str()?.to_string()))
+}
+
+/// Saves (or, with `None`, clears) the found update.
+fn save_found(store: &Store, found: Option<(&str, &str)>) {
+    let v = found.map_or(serde_json::Value::Null, |(latest, url)| serde_json::json!({ "latest": latest, "url": url }));
+    if let Err(e) = store.set_setting(KEY_UPDATE_FOUND, &v) {
+        tracing::warn!(error = %e, "found update not saved");
+    }
+}
+
 /// Managed state: the feed and the last result, kept in memory.
 pub struct Updater {
     status: Mutex<UpdateStatus>,
@@ -134,6 +160,19 @@ impl Updater {
         }
     }
 
+    /// At start: shows an update a check found before the restart, while it is still newer.
+    pub fn load_found(&self, store: &Store) {
+        let mut s = self.status.lock().unwrap_or_else(|e| e.into_inner());
+        match saved_found(store) {
+            Some((latest, url)) if is_newer(&s.current, &latest) => {
+                s.latest = Some(latest);
+                s.url = Some(safe_release_url(Some(&url)));
+            }
+            Some(_) => save_found(store, None),
+            None => {}
+        }
+    }
+
     pub fn status(&self) -> UpdateStatus {
         self.status.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
@@ -141,9 +180,17 @@ impl Updater {
     /// Checks now, whatever the switch and the clock say, and saves the time.
     pub async fn check_now(&self, client: &reqwest::Client, store: &Store) -> UpdateStatus {
         let current = self.status().current;
-        let s = check(client, &self.feed, &current).await;
+        let mut s = check(client, &self.feed, &current).await;
         save_last_check(store, Utc::now());
-        *self.status.lock().unwrap_or_else(|e| e.into_inner()) = s.clone();
+        let mut held = self.status.lock().unwrap_or_else(|e| e.into_inner());
+        if s.error.is_some() {
+            // A failed check says nothing new: keep an update found earlier.
+            s.latest = held.latest.clone();
+            s.url = held.url.clone();
+        } else {
+            save_found(store, s.latest.as_deref().zip(s.url.as_deref()));
+        }
+        *held = s.clone();
         s
     }
 
@@ -363,6 +410,68 @@ mod tests {
         let s = u.check_now(&client(), &store).await;
         assert!(s.error.is_some());
         assert!(last_check(&store).is_some());
+    }
+
+    #[tokio::test]
+    async fn failed_check_keeps_found_update() {
+        let (good, _) = feed(StatusCode::OK, NEWER).await;
+        let (bad, _) = feed(StatusCode::INTERNAL_SERVER_ERROR, "oops").await;
+        let store = Store::open_in_memory().unwrap();
+        let mut u = Updater::new(&good, "0.1.0");
+        u.check_now(&client(), &store).await;
+        u.feed = bad;
+        let s = u.check_now(&client(), &store).await;
+        assert_eq!(s.latest.as_deref(), Some("0.2.0"));
+        assert_eq!(s.url.as_deref(), Some(TAG_URL));
+        assert!(s.error.is_some(), "{s:?}");
+    }
+
+    #[tokio::test]
+    async fn found_update_survives_restart() {
+        let (url, _) = feed(StatusCode::OK, NEWER).await;
+        let store = Store::open_in_memory().unwrap();
+        Updater::new(&url, "0.1.0").check_now(&client(), &store).await;
+        let after_restart = Updater::new(&url, "0.1.0");
+        after_restart.load_found(&store);
+        assert_eq!(after_restart.status().latest.as_deref(), Some("0.2.0"));
+        assert_eq!(after_restart.status().url.as_deref(), Some(TAG_URL));
+    }
+
+    #[tokio::test]
+    async fn saved_update_cleared_once_installed() {
+        let (url, _) = feed(StatusCode::OK, NEWER).await;
+        let store = Store::open_in_memory().unwrap();
+        Updater::new(&url, "0.1.0").check_now(&client(), &store).await;
+        let upgraded = Updater::new(&url, "0.2.0");
+        upgraded.load_found(&store);
+        assert_eq!(upgraded.status().latest, None);
+        assert_eq!(saved_found(&store), None);
+    }
+
+    #[tokio::test]
+    async fn up_to_date_check_clears_saved_update() {
+        let (newer, _) = feed(StatusCode::OK, NEWER).await;
+        let (same, _) = feed(StatusCode::OK, r#"{"tag_name":"v0.1.0","html_url":"x"}"#).await;
+        let store = Store::open_in_memory().unwrap();
+        let mut u = Updater::new(&newer, "0.1.0");
+        u.check_now(&client(), &store).await;
+        u.feed = same;
+        assert_eq!(u.check_now(&client(), &store).await.latest, None);
+        assert_eq!(saved_found(&store), None);
+    }
+
+    #[test]
+    fn release_url_cannot_climb() {
+        for bad in [
+            "https://github.com/meraaki410/haul/releases/../../evil",
+            "https://github.com/meraaki410/haul/releases/%2e%2e/%2e%2e/evil",
+            "https://github.com.evil.io/meraaki410/haul/releases/x",
+            "https://github.com@evil.io/meraaki410/haul/releases/x",
+            "http://github.com/meraaki410/haul/releases/x",
+        ] {
+            assert_eq!(safe_release_url(Some(bad)), RELEASES, "{bad}");
+        }
+        assert_eq!(safe_release_url(Some(TAG_URL)), TAG_URL);
     }
 
     #[test]

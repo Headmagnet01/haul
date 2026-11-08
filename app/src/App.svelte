@@ -59,7 +59,7 @@
   void app.load();
   void collector.load();
   void post.load();
-  const up = createUpdateState(app.backend);
+  const up = createUpdateState(app.backend, (t) => app.showToast(t));
   void up.load();
   const wd = createWhenDoneState(app.backend, { showToast: (t) => app.showToast(t) });
   const rules = createRulesState(app.backend, { showToast: (t) => app.showToast(t) });

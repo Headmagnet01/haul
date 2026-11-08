@@ -5,7 +5,8 @@ import type { UpdateStatus } from './types';
 export type UpdateState = ReturnType<typeof createUpdateState>;
 
 /** The update check: the status bar's notice and Settings › App's Check now. */
-export function createUpdateState(backend: Backend) {
+/** `notify` shows a toast (the app's), for a release page that wouldn't open. */
+export function createUpdateState(backend: Backend, notify: (text: string) => void = () => {}) {
   let status = $state<UpdateStatus | null>(null);
   let checking = $state(false);
 
@@ -45,7 +46,12 @@ export function createUpdateState(backend: Backend) {
     checkNow,
     /** Opens the newer release's page. */
     async open() {
-      if (status?.url) await backend.openRelease(status.url);
+      if (!status?.url) return;
+      try {
+        await backend.openRelease(status.url);
+      } catch (e) {
+        notify(`Couldn't open the release page: ${errText(e)}`);
+      }
     },
     /** The line under Check now; empty before the first check. */
     message(): string {

@@ -246,7 +246,9 @@ pub fn run() {
             }
             spawn_when_done(app.handle().clone(), core.clone());
             repair_autostart(&core, &app.config().identifier);
-            app.manage(crate::update::Updater::new(crate::update::FEED, env!("CARGO_PKG_VERSION")));
+            let updater = crate::update::Updater::new(crate::update::FEED, env!("CARGO_PKG_VERSION"));
+            updater.load_found(&core.store);
+            app.manage(updater);
             crate::update::spawn_loop(app.handle().clone(), core.clone());
             app.manage(gate);
             app.manage(core);

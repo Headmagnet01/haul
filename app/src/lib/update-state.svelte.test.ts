@@ -65,3 +65,13 @@ test('open_goes_to_backend', async () => {
   await u.open();
   expect(b.calls).toContain(`openRelease ${TAG}`);
 });
+
+test('open_release_failure_shows_toast', async () => {
+  const b = createMockBackend({ tickMs: 60_000, demo: false, update: '0.2.0' });
+  const said: string[] = [];
+  const failing = { ...b, openRelease: async () => Promise.reject('boom') };
+  const u = createUpdateState(failing, (t) => said.push(t));
+  await u.load();
+  await u.open();
+  expect(said).toEqual(["Couldn't open the release page: boom"]);
+});
