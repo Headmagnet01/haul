@@ -9,6 +9,8 @@ build/
 .svelte-kit/
 # Extension builds
 extension/dist/
+extension/dist-firefox/
+*.xpi
 *.zip
 # Local
 _tmp/
