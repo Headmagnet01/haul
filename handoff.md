@@ -1,6 +1,6 @@
 # Haul: handoff
 
-Last updated: 8 Nov 2026. Plans 1–4 are merged into `master`. Plan 5 (local API, pairing, browser extension) is built on branch `feat/browser-extension`, reviewed, and **not merged**: it waits for the owner's hand check in Edge and go-ahead.
+Last updated: 8 Nov 2026. Plans 1–5 are merged into `master` (Plan 5 fast-forwarded at `1fee711` after the owner's hand check in Edge). Plan 6 is next.
 
 ## What Haul is
 A free, open-source Windows download manager. It pairs IDM's fast engine and browser capture with JDownloader 2's link collector, packages and auto-extraction, in a calm "dispatch board" interface.
@@ -12,12 +12,13 @@ A free, open-source Windows download manager. It pairs IDM's fast engine and bro
 ## Where things stand
 | | |
 |---|---|
-| Branch | `feat/browser-extension`, cut from `master` at `41cb998`. No Git remote exists. |
-| Done | Plans 1–4 merged. Plan 5 built: `docs/superpowers/plans/2026-11-08-haul-plan-5-browser-extension.md`, Tasks 1–10, design in `docs/superpowers/specs/2026-11-08-haul-browser-extension-design.md`. |
+| Branch | `master` holds everything; `feat/browser-extension` is merged. Cut Plan 6's branch from `master`. No Git remote exists. |
+| Done | Plans 1–5 merged. Plan 5: `docs/superpowers/plans/2026-11-08-haul-plan-5-browser-extension.md`, Tasks 1–10, design in `docs/superpowers/specs/2026-11-08-haul-browser-extension-design.md`. |
 | Tests (8 Nov) | Rust: 310 tests (one known timing flake, see below). Front end: 78 Vitest, 56 Playwright e2e tests in light and dark (112 runs). Extension: 32 Vitest. Clippy, rustfmt, svelte-check and the extension's `tsc` are clean. Real-app smoke 3/4: the clipboard test can't run `Set-Clipboard` in a sandboxed session (it passed on 6 Nov). |
 | Real browser (8 Nov) | `app/e2e-real/extension.spec.ts` loaded the extension into Edge, found Haul, paired through the real Allow dialog. It found a real bug (status must be a POST, below). The click → Haul steps could not run: Edge started from the sandboxed session never completes a download, even with no extension and no Playwright attached. |
 | Review | A fresh reviewer (8 Nov): no Critical; 3 Important, all fixed test-first (stale pairing dialog, no-final-URL downloads, a stuck Pair button). Minors deferred, listed in the Plan 5 section. |
-| Next | 1. The owner's hand check in Edge (below). 2. Merge on the owner's go-ahead. 3. Plan 6: settings, tray, first run, "when done", the Finished view, packaging. |
+| Owner hand check (8 Nov) | Passed in Edge: a 2.1 GB click went to Haul's Queue; with Haul closed, Edge kept the download. It found one bug: `.btn`'s `display` beat the `hidden` attribute, so the popup always showed Pair with Haul (fixed in `style.css`). Speed matched plain `curl` (~7 MB/s on the owner's line). |
+| Next | Plan 6: settings (the dev DB's download folder is still `_tmp\smoke`), tray (closing the window should minimise to the tray and keep downloading; today it pauses and quits), first run, "when done", the Finished view, packaging. The speed readout averages only 2 s, so it looks jumpier than IDM's; worth a longer window. |
 
 ## The app, and how to run it
 - **Real app:** `cd app` and `npx tauri dev`. The window is titled Haul, 1280×800 by default.
@@ -57,7 +58,7 @@ A free, open-source Windows download manager. It pairs IDM's fast engine and bro
   1. `cd extension`, `npm install` (once), `npm run build`.
   2. In Edge: `edge://extensions`, turn on Developer mode, Load unpacked, pick `extension\dist`.
   3. Start Haul, click the Haul toolbar button, Pair with Haul, then Allow in Haul.
-- **Hand check still owed:** with the extension paired, click a real download of 1 MB or more on a normal site. It should appear in Haul's Queue, complete, and vanish from Edge's download list. With Haul closed, the same click should download in Edge as usual.
+- **Hand check (passed 8 Nov):** with the extension paired, click a real download of 1 MB or more on a normal site. It should appear in Haul's Queue, complete, and vanish from Edge's download list. With Haul closed, the same click should download in Edge as usual.
 - **Bugs found while building, each fixed with a test that failed first:**
   - Edge sends no `Origin` on an extension's GET, so `GET /v1/status` was refused and the popup said Haul wasn't running. Status is now a POST (GET gets 405). Found by the real-browser test.
   - Review: a stale pairing dialog could approve a newer request. Answers now carry the request number, and Haul closes the dialog when a request ends.
