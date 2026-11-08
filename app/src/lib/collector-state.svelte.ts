@@ -2,6 +2,7 @@ import { SvelteSet } from 'svelte/reactivity';
 import type { Backend } from './backend';
 import { buildCollectorList, onlineIds, startableIds, subLine, type CItem } from './collector';
 import type { CollectorFilters, CollectorSnapshot, Update } from './types';
+import { errText } from './postproc';
 
 export type CSel = { kind: 'package'; key: string } | { kind: 'link'; id: number };
 export type Chip = 'html' | 'images' | 'small' | 'duplicates';
@@ -65,7 +66,12 @@ export function createCollectorState(
     if (!p) return;
     pending = null;
     clearTimeout(p.timer);
-    await backend.collectorRemove(p.ids);
+    try {
+      await backend.collectorRemove(p.ids);
+    } catch (e) {
+      p.ids.forEach((id) => removed.delete(id));
+      ui.showToast(`Couldn't remove: ${errText(e)}`);
+    }
     await load();
   }
 

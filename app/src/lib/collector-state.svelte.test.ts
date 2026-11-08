@@ -124,3 +124,15 @@ test('double_start_calls_backend_once', async () => {
   expect(b.calls.filter((x) => x === 'collectorStart')).toHaveLength(1);
   expect(toasts.filter((t) => t.startsWith('Started'))).toEqual(['Started 2 downloads']);
 });
+
+test('failed_collector_remove_restores', async () => {
+  const { b, c, toasts } = setup();
+  await b.addLinks('https://a.org/1.bin', 'paste');
+  await c.load();
+  const id = c.snapshot.links[0].id;
+  b.failNext('collectorRemove', 'x');
+  c.removeWithUndo([id]);
+  await vi.advanceTimersByTimeAsync(6000);
+  expect(c.items.some((i) => i.kind === 'link' && i.link.id === id)).toBe(true);
+  expect(toasts.at(-1)).toBe("Couldn't remove: x");
+});

@@ -113,6 +113,7 @@ export function getBackend(): Backend {
       queueDrained: () => mock.queueDrained(),
       showView: (v: string) => mock.showView(v),
       updateAvailable: (v: string) => mock.updateAvailable(v),
+      failNext: (m: keyof Backend, msg: string) => mock.failNext(m, msg),
     };
     instance = mock;
   } else {

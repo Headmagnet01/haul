@@ -120,6 +120,8 @@ export function createMockBackend(
 ): Backend & {
   calls: string[]; pairRequest(browser: string): number; pairTimeout(): void; queueDrained(): void; showView(view: string): void;
   updateAvailable(version: string): void;
+  /** The next call of `method` rejects with `message` (as a Tauri command does), once. */
+  failNext(method: keyof Backend, message: string): void;
 } {
   const calls: string[] = [];
   // Pairing: one waiting request at a time, like the app.
@@ -372,8 +374,26 @@ export function createMockBackend(
   const rec = (name: string) => calls.push(name);
   const find = (id: number) => downloads.find((d) => d.id === id);
 
-  return {
+  const failures = new Map<string, string>();
+  /** Wraps each method so a `failNext` makes its next call reject; others keep their sync or async shape. */
+  function withFailures<T extends object>(api: T): T {
+    for (const [k, v] of Object.entries(api)) {
+      if (typeof v !== 'function') continue;
+      (api as Record<string, unknown>)[k] = (...args: unknown[]) => {
+        const msg = failures.get(k);
+        if (msg === undefined) return v.apply(api, args);
+        failures.delete(k);
+        return Promise.reject(msg);
+      };
+    }
+    return api;
+  }
+
+  return withFailures({
     calls,
+    failNext(method: keyof Backend, message: string) {
+      failures.set(method, message);
+    },
     async settings() {
       rec('settings');
       return fullSettings();
@@ -692,5 +712,5 @@ export function createMockBackend(
       update = { ...update, latest: version, url: tagUrl(version) };
       for (const cb of updateListeners) cb({ version, url: tagUrl(version) });
     },
-  };
+  });
 }

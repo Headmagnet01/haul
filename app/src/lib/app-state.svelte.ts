@@ -126,7 +126,13 @@ export function createAppState(backend: Backend) {
 
   /** Pasted, dropped or typed links go to the Collector. */
   async function addText(text: string, source: Source): Promise<IntakeResult> {
-    const r = await backend.addLinks(text, source);
+    let r: IntakeResult;
+    try {
+      r = await backend.addLinks(text, source);
+    } catch (e) {
+      showToast(`Couldn't add links: ${errText(e)}`);
+      return { added: 0, skipped: 0 };
+    }
     if (r.added > 0) {
       const s = r.added === 1 ? '' : 's';
       showToast(`Sent ${r.added} link${s} to the Collector`, { label: 'Show', run: () => (view = 'collector') });
@@ -149,7 +155,12 @@ export function createAppState(backend: Backend) {
     clearTimeout(p.timer);
     // Rows stay hidden until a snapshot no longer has them: a running download is deleted
     // only after its transfer stops, so the next snapshot may still include it.
-    await backend.remove(p.ids);
+    try {
+      await backend.remove(p.ids);
+    } catch (e) {
+      p.ids.forEach((id) => hidden.delete(id));
+      showToast(`Couldn't remove: ${errText(e)}`);
+    }
     await load();
   }
 
@@ -173,11 +184,15 @@ export function createAppState(backend: Backend) {
 
   async function applyPlan(p: MovePlan | null) {
     if (!p) return;
-    for (const id of p.moved) {
-      const d = byId.get(id);
-      if (d && d.priority !== p.priority) await backend.setPriority(id, p.priority);
+    try {
+      for (const id of p.moved) {
+        const d = byId.get(id);
+        if (d && d.priority !== p.priority) await backend.setPriority(id, p.priority);
+      }
+      await backend.reorder(p.order);
+    } catch (e) {
+      showToast(`Couldn't move: ${errText(e)}`);
     }
-    await backend.reorder(p.order);
     await load();
   }
 
@@ -228,8 +243,14 @@ export function createAppState(backend: Backend) {
     lastSteal,
     ranges,
     async setSpeedLimit(l: SpeedLimit) {
+      const before = { ...snapshot.speedLimit };
       snapshot.speedLimit = { ...l };
-      await backend.setSettings({ speedLimit: l });
+      try {
+        await backend.setSettings({ speedLimit: l });
+      } catch (e) {
+        snapshot.speedLimit = before;
+        showToast(`Couldn't change the speed limit: ${errText(e)}`);
+      }
     },
     get list() { return list; },
     get runs() { return runs; },

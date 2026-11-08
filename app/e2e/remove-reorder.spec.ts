@@ -71,3 +71,16 @@ test('removed_running_row_never_reappears', async ({ page }) => {
   expect(await calls(page)).toContain('remove');
   expect(Math.max(...seen)).toBe(0);
 });
+
+test('remove_failure_shows_toast', async ({ page }) => {
+  test.setTimeout(20_000);
+  await page.goto('/?demo=1');
+  await page.evaluate(() =>
+    (window as unknown as { __haulMock: { failNext: (m: string, msg: string) => void } }).__haulMock.failNext('remove', 'disk busy'),
+  );
+  await fileRows(page).filter({ hasText: ISO }).click();
+  await page.keyboard.press('Delete');
+  await expect(fileRows(page).filter({ hasText: ISO })).toHaveCount(0);
+  await expect(page.getByRole('status')).toContainText("Couldn't remove: disk busy", { timeout: 9000 });
+  await expect(fileRows(page).filter({ hasText: ISO })).toHaveCount(1);
+});
