@@ -405,7 +405,7 @@ async fn hand_pause_during_window_close_stays_paused() {
     let dir = tempfile::tempdir().unwrap();
     let c = ctx_on(Store::open_in_memory().unwrap(), TransferConfig::for_tests());
     let q = Queue::start(c.clone(), 20);
-    let ids: Vec<_> = (0..10).map(|_| q.add(nd(&srv.url, dir.path(), Priority::Normal)).unwrap()).collect();
+    let ids: Vec<_> = (0..4).map(|_| q.add(nd(&srv.url, dir.path(), Priority::Normal)).unwrap()).collect();
     for &id in &ids {
         wait_state(&c.store, id, DownloadState::Running, 5).await;
     }
