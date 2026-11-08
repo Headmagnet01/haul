@@ -147,6 +147,8 @@ impl Store {
     fn init(conn: Connection) -> Result<Store, EngineError> {
         conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
+        // Deleted rows (wiped headers, removed passwords and pairings) are overwritten, not left in free pages.
+        conn.pragma_update(None, "secure_delete", "ON")?;
         conn.busy_timeout(std::time::Duration::from_secs(5))?;
         let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
         let migrations = [
@@ -256,7 +258,7 @@ impl Store {
     pub fn set_state(&self, id: DownloadId, s: DownloadState, error: Option<&str>) -> Result<(), EngineError> {
         let wipe = s == DownloadState::Failed;
         self.lock().execute(
-            "UPDATE downloads SET state = ?2, error = ?3,              headers_blob = CASE WHEN ?4 THEN NULL ELSE headers_blob END WHERE id = ?1",
+            "UPDATE downloads SET state = ?2, error = ?3, headers_blob = CASE WHEN ?4 THEN NULL ELSE headers_blob END WHERE id = ?1",
             params![id, s.as_str(), error, wipe],
         )?;
         Ok(())
@@ -647,6 +649,50 @@ mod tests {
         let d = &s.list_downloads().unwrap()[0];
         assert_eq!(d.state, DownloadState::Completed);
         assert_eq!(d.finished_at, None);
+    }
+
+    #[test]
+    fn secure_delete_is_on() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = Store::open(&dir.path().join("haul.db")).unwrap();
+        let on: i64 = s.lock().pragma_query_value(None, "secure_delete", |r| r.get(0)).unwrap();
+        assert_eq!(on, 1);
+    }
+
+    /// Plan 5 dropped plain-text headers from older rows; with `secure_delete` the old text
+    /// is also gone from the database file itself, not left behind in freed space.
+    #[test]
+    fn migration_5_leaves_no_plain_headers_on_disk() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("haul.db");
+        {
+            let c = Connection::open(&path).unwrap();
+            for (i, sql) in [
+                include_str!("schema.sql"),
+                include_str!("migration_2.sql"),
+                include_str!("migration_3.sql"),
+                include_str!("migration_4.sql"),
+            ]
+            .iter()
+            .enumerate()
+            {
+                c.execute_batch(&format!("BEGIN; {sql} PRAGMA user_version = {}; COMMIT;", i + 1)).unwrap();
+            }
+            c.execute(
+                "INSERT INTO downloads (url, headers_json, state, position, target_dir) VALUES \
+                 ('https://a.org/x', '{\"Cookie\":\"sid=SECRET4242\"}', 'queued', 0, 'dl')",
+                [],
+            )
+            .unwrap();
+        }
+        {
+            let s = Store::open(&path).unwrap();
+            assert_eq!(s.list_downloads().unwrap()[0].headers_json, None);
+        }
+        for e in std::fs::read_dir(dir.path()).unwrap() {
+            let bytes = std::fs::read(e.unwrap().path()).unwrap();
+            assert!(!bytes.windows(10).any(|w| w == b"SECRET4242"), "the old cookie is still on disk");
+        }
     }
 
     #[test]
