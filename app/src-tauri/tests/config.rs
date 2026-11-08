@@ -116,15 +116,48 @@ fn bundled_extension_has_every_manifest_file() {
     assert!(missing.is_empty(), "named but missing from extension/dist: {missing:?}");
 }
 
+/// The Run value goes on a real uninstall only (an update keeps it). Task Manager's StartupApproved
+/// mark is kept, so a startup the user disabled stays disabled across an upgrade that uninstalls first.
 #[test]
 fn uninstall_hook_removes_run_value() {
     let path = concat!(env!("CARGO_MANIFEST_DIR"), "/installer-hooks.nsh");
     let nsh = std::fs::read_to_string(path).expect("installer-hooks.nsh exists");
     assert!(nsh.contains("!macro NSIS_HOOK_POSTUNINSTALL"));
+    assert!(nsh.contains("${If} $UpdateMode <> 1"));
     assert!(nsh.contains(r#"DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "Haul""#));
-    assert!(nsh.contains(
-        r#"DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run" "Haul""#
-    ));
+    assert!(!nsh.contains("StartupApproved"), "Task Manager's mark is kept");
+}
+
+/// Pages the extension's code opens itself (`chrome.runtime.getURL('picker.html...')`) are not
+/// in the manifest; each must still be built into dist.
+#[test]
+fn extension_pages_opened_by_code_are_bundled() {
+    let root = std::path::PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../extension"));
+    let mut opened = Vec::new();
+    let mut dirs = vec![root.join("src")];
+    while let Some(d) = dirs.pop() {
+        for e in std::fs::read_dir(&d).unwrap().flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                dirs.push(p);
+            } else if p.extension().is_some_and(|x| x == "ts" || x == "js") {
+                let text = std::fs::read_to_string(&p).unwrap();
+                for part in text.split("getURL(").skip(1) {
+                    let part = part.trim_start();
+                    let Some(q) = part.chars().next().filter(|c| matches!(c, '\'' | '"' | '`')) else { continue };
+                    let name: String =
+                        part[1..].chars().take_while(|c| !matches!(c, '?' | '#' | '$') && *c != q).collect();
+                    if !name.is_empty() {
+                        opened.push(name);
+                    }
+                }
+            }
+        }
+    }
+    assert!(opened.contains(&"picker.html".to_string()), "found {opened:?}");
+    let dist = root.join("dist");
+    let missing: Vec<&String> = opened.iter().filter(|f| !dist.join(f).is_file()).collect();
+    assert!(missing.is_empty(), "opened by the extension's code but missing from extension/dist: {missing:?}");
 }
 
 #[test]

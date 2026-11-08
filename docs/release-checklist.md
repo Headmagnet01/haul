@@ -4,7 +4,13 @@ Do these in order for every release. The installer is not code-signed yet, so Wi
 
 ## 1. The gate
 
-From the repository root (stop `tauri dev` first, or set `CARGO_TARGET_DIR=_tmp/target-alt`):
+Build the extension first. The config tests check the bundled extension against `extension/dist`, which is not in Git, so a stale or missing build would test the wrong files. On a fresh clone the `haul-app` crate doesn't compile at all until `extension/dist` exists.
+
+```bash
+npm --prefix extension run build
+```
+
+Then, from the repository root (stop `tauri dev` first, or set `CARGO_TARGET_DIR=_tmp/target-alt`):
 
 ```bash
 cargo test --workspace --no-fail-fast

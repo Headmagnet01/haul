@@ -103,21 +103,12 @@ fn spawn_when_done(app: tauri::AppHandle, core: AppCore) {
     });
 }
 
-/// Rewrites the Start with Windows value quoted for this exe, or turns the setting off if the value is gone.
-fn repair_autostart(core: &AppCore) {
+/// Rewrites this build's Start with Windows value quoted for this exe (or restores it) while the setting is on.
+fn repair_autostart(core: &AppCore, identifier: &str) {
     let on = core.settings().autostart;
-    let result = std::env::current_exe()
-        .and_then(|exe| crate::autostart::repair(&crate::autostart::Autostart::real(), on, &exe));
-    match result {
-        Ok(now) if now != on => {
-            tracing::info!("autostart: the Run value is gone; turning the setting off");
-            let patch = crate::settings::SettingsPatch { autostart: Some(now), ..Default::default() };
-            if let Err(e) = core.set_settings(patch) {
-                tracing::warn!(error = %e, "autostart setting not updated");
-            }
-        }
-        Ok(_) => {}
-        Err(e) => tracing::warn!(error = %e, "autostart: could not check the Run value"),
+    let a = crate::autostart::Autostart::real(crate::autostart::value_name(identifier));
+    if let Err(e) = std::env::current_exe().and_then(|exe| crate::autostart::repair(&a, on, &exe)) {
+        tracing::warn!(error = %e, "autostart: could not check the Run value");
     }
 }
 
@@ -253,7 +244,7 @@ pub fn run() {
                 tracing::warn!(error = %e, "tray icon not created");
             }
             spawn_when_done(app.handle().clone(), core.clone());
-            repair_autostart(&core);
+            repair_autostart(&core, &app.config().identifier);
             app.manage(crate::update::Updater::new(crate::update::FEED, env!("CARGO_PKG_VERSION")));
             crate::update::spawn_loop(app.handle().clone(), core.clone());
             app.manage(gate);

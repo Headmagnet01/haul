@@ -10,8 +10,16 @@ use windows_sys::Win32::System::Registry::{
     HKEY_CURRENT_USER, REG_SZ, RRF_RT_REG_BINARY, RRF_RT_REG_SZ, RegDeleteKeyValueW, RegGetValueW, RegSetKeyValueW,
 };
 
-/// The Run value's name.
+/// The installed Haul's Run value name (also what the uninstaller removes).
 pub const NAME: &str = "Haul";
+/// The installed build's identifier (`tauri.release.conf.json`).
+pub const RELEASE_ID: &str = "dev.haul.desktop";
+
+/// The Run value name for an app identifier: `Haul` for the installed build, `Haul (dev)` for any
+/// other, so a dev build never overwrites or deletes the installed Haul's entry.
+pub fn value_name(identifier: &str) -> &'static str {
+    if identifier == RELEASE_ID { NAME } else { "Haul (dev)" }
+}
 const RUN: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
 const APPROVED: &str = r"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run";
 
@@ -25,31 +33,37 @@ pub fn run_value(exe: &Path) -> String {
 pub struct Autostart {
     run: String,
     approved: String,
+    name: String,
 }
 
 impl Autostart {
-    /// The real `Run` key.
-    pub fn real() -> Autostart {
-        Autostart { run: RUN.into(), approved: APPROVED.into() }
+    /// The real `Run` key, value `name` (see `value_name`).
+    pub fn real(name: &str) -> Autostart {
+        Autostart { run: RUN.into(), approved: APPROVED.into(), name: name.into() }
     }
 
     /// A copy of the layout under `root` (`<root>\Run`, `<root>\StartupApproved\Run`), for tests.
     pub fn at(root: &str) -> Autostart {
-        Autostart { run: format!(r"{root}\Run"), approved: format!(r"{root}\StartupApproved\Run") }
+        Autostart { run: format!(r"{root}\Run"), approved: format!(r"{root}\StartupApproved\Run"), name: NAME.into() }
+    }
+
+    /// The same keys, another value name.
+    pub fn named(self, name: &str) -> Autostart {
+        Autostart { name: name.into(), ..self }
     }
 
     /// Writes the quoted value, and clears a "disabled" mark Task Manager left, so the switch works.
     pub fn enable(&self, exe: &Path) -> io::Result<()> {
         self.write_run(exe)?;
-        if read_binary(&self.approved, NAME)?.is_some_and(|b| b.first().is_some_and(|f| f % 2 == 1)) {
-            delete_value(&self.approved, NAME)?;
+        if read_binary(&self.approved, &self.name)?.is_some_and(|b| b.first().is_some_and(|f| f % 2 == 1)) {
+            delete_value(&self.approved, &self.name)?;
         }
         Ok(())
     }
 
     /// Removes the value; a missing one is fine.
     pub fn disable(&self) -> io::Result<()> {
-        delete_value(&self.run, NAME)
+        delete_value(&self.run, &self.name)
     }
 
     pub fn is_enabled(&self) -> io::Result<bool> {
@@ -58,30 +72,23 @@ impl Autostart {
 
     /// The Run value as stored, if any.
     pub fn value(&self) -> io::Result<Option<String>> {
-        read_string(&self.run, NAME)
+        read_string(&self.run, &self.name)
     }
 
     fn write_run(&self, exe: &Path) -> io::Result<()> {
-        write_string(&self.run, NAME, &run_value(exe))
+        write_string(&self.run, &self.name, &run_value(exe))
     }
 }
 
-/// At start: with the setting on, rewrites the value quoted for the current exe (repairing an old
-/// unquoted one, following a moved exe) but leaves Task Manager's mark alone. A value removed outside
-/// Haul turns the setting off. Returns the setting's new value.
+/// At start: with the setting on, writes the value quoted for the current exe when it differs or is
+/// missing (an old unquoted value, a moved exe, or an upgrade whose uninstall step deleted it). Task
+/// Manager's "disabled" mark is left alone, so a startup the user turned off there stays off.
+/// Returns the setting's value.
 pub fn repair(a: &Autostart, setting_on: bool, exe: &Path) -> io::Result<bool> {
-    if !setting_on {
-        return Ok(false);
+    if setting_on && a.value()?.as_deref() != Some(run_value(exe).as_str()) {
+        a.write_run(exe)?;
     }
-    match a.value()? {
-        None => Ok(false),
-        Some(v) => {
-            if v != run_value(exe) {
-                a.write_run(exe)?;
-            }
-            Ok(true)
-        }
-    }
+    Ok(setting_on)
 }
 
 fn wide(s: &str) -> Vec<u16> {
@@ -279,11 +286,41 @@ mod tests {
         assert_eq!(s.a.value().unwrap(), Some(run_value(&exe())));
     }
 
+    /// An upgrade that uninstalls first (Tauri's default) deletes the Run value; the setting wins.
     #[test]
-    fn repair_turns_setting_off_when_value_gone() {
+    fn repair_restores_missing_value() {
         let s = Scratch::new();
-        assert!(!repair(&s.a, true, &exe()).unwrap());
-        assert_eq!(s.a.value().unwrap(), None);
+        assert!(repair(&s.a, true, &exe()).unwrap());
+        assert_eq!(s.a.value().unwrap(), Some(run_value(&exe())));
+    }
+
+    /// Restoring the value keeps Task Manager's "disabled" mark: the user's choice there stands.
+    #[test]
+    fn repair_keeps_task_manager_disabled_mark() {
+        let s = Scratch::new();
+        let approved = format!(r"{}\StartupApproved\Run", s.root);
+        write_binary(&approved, NAME, &[3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+        assert!(repair(&s.a, true, &exe()).unwrap());
+        assert!(has_value(&approved, NAME));
+    }
+
+    #[test]
+    fn value_name_separates_dev() {
+        assert_eq!(value_name("dev.haul.desktop"), "Haul");
+        assert_eq!(value_name("dev.haul.desktop.dev"), "Haul (dev)");
+    }
+
+    /// A dev build switching its own entry on and off leaves the installed Haul's entry alone.
+    #[test]
+    fn dev_entry_leaves_installed_entry_alone() {
+        let s = Scratch::new();
+        let dev = Autostart::at(&s.root).named("Haul (dev)");
+        s.a.enable(&exe()).unwrap();
+        dev.enable(Path::new(r"C:\src\target\debug\haul.exe")).unwrap();
+        assert_eq!(s.a.value().unwrap(), Some(run_value(&exe())));
+        dev.disable().unwrap();
+        assert_eq!(s.a.value().unwrap(), Some(run_value(&exe())));
+        assert_eq!(dev.value().unwrap(), None);
     }
 
     #[test]

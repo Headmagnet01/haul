@@ -32,7 +32,7 @@ pub async fn settings(core: State<'_, AppCore>) -> R<Settings> {
 pub async fn set_settings(app: AppHandle, core: State<'_, AppCore>, patch: SettingsPatch) -> R<Settings> {
     // Autostart first: if Windows refuses, nothing is saved and the switch stays as it was.
     if let Some(on) = patch.autostart {
-        let a = crate::autostart::Autostart::real();
+        let a = crate::autostart::Autostart::real(crate::autostart::value_name(&app.config().identifier));
         let r = if on { std::env::current_exe().and_then(|exe| a.enable(&exe)) } else { a.disable() };
         r.map_err(|e| format!("autostart: {e}"))?;
     }
