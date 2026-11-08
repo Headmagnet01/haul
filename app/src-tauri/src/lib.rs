@@ -87,6 +87,7 @@ fn spawn_when_done(app: tauri::AppHandle, core: AppCore) {
                         tracing::info!(?mode, "when done: carrying out");
                         if let Err(e) = core.carry_out(mode).await {
                             tracing::warn!(error = %e, "when done failed");
+                            crate::toast::show(&app, crate::toast::when_done_failed(&e.to_string()));
                         }
                     }
                 },

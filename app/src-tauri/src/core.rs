@@ -482,14 +482,20 @@ impl AppCore {
         }
     }
 
-    /// Sleep keeps Haul running; Shut down saves and stops downloads first.
+    /// Sleep keeps Haul running; Shut down pauses and saves downloads first. If Windows refuses
+    /// the shutdown, the downloads it paused carry on and the error says Haul is still running.
     pub async fn carry_out(&self, mode: Mode) -> std::io::Result<()> {
         match mode {
             Mode::Nothing => Ok(()),
-            Mode::Sleep => self.power.sleep(),
+            Mode::Sleep => {
+                self.power.sleep().map_err(|e| std::io::Error::other(format!("Windows didn't sleep ({e}).")))
+            }
             Mode::Shutdown => {
-                self.shutdown().await;
-                self.power.shutdown()
+                let paused = self.queue.hold().await;
+                self.power.shutdown().map_err(|e| {
+                    self.queue.release(&paused);
+                    std::io::Error::other(format!("Windows didn't shut down ({e}). Haul is still running."))
+                })
             }
         }
     }
@@ -1154,6 +1160,8 @@ mod tests {
     #[derive(Default)]
     struct FakePower {
         calls: Mutex<Vec<&'static str>>,
+        /// Shutdown fails, as when Windows refuses it.
+        refuse: bool,
     }
 
     impl crate::when_done::PowerAction for FakePower {
@@ -1163,6 +1171,9 @@ mod tests {
         }
         fn shutdown(&self) -> std::io::Result<()> {
             self.calls.lock().unwrap().push("shutdown");
+            if self.refuse {
+                return Err(std::io::Error::other("A required privilege is not held by the client. (os error 1314)"));
+            }
             Ok(())
         }
     }
@@ -1186,8 +1197,20 @@ mod tests {
         c.when_done_now().await.unwrap();
         assert_eq!(*power.calls.lock().unwrap(), vec!["shutdown"]);
         assert_eq!(c.when_done_status().mode, crate::when_done::Mode::Nothing);
-        // The shutdown path ran first: the queue no longer starts downloads.
-        assert!(c.queue.is_stopped());
+        // The shutdown path ran first: downloads were saved and nothing new starts.
+        assert!(c.queue.is_held());
+    }
+
+    #[tokio::test]
+    async fn refused_shutdown_keeps_queue_running() {
+        let dir = tempfile::tempdir().unwrap();
+        let power = Arc::new(FakePower { refuse: true, ..FakePower::default() });
+        let c = core(Store::open_in_memory().unwrap(), dir.path()).with_power(power.clone());
+        let err = c.carry_out(crate::when_done::Mode::Shutdown).await.unwrap_err();
+        assert_eq!(*power.calls.lock().unwrap(), vec!["shutdown"]);
+        assert!(err.to_string().starts_with("Windows didn't shut down"), "{err}");
+        assert!(!c.queue.is_held());
+        assert!(!c.queue.is_stopped());
     }
 
     #[tokio::test]

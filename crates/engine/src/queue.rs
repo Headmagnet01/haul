@@ -26,6 +26,8 @@ struct Inner {
     running: Mutex<HashMap<DownloadId, Running>>,
     wake: Notify,
     stop: CancellationToken,
+    /// `hold` paused everything; nothing starts until `release`.
+    held: AtomicBool,
     /// Something ran since the last AllDone.
     ran: AtomicBool,
     schedule: Mutex<Option<Schedule>>,
@@ -53,6 +55,7 @@ impl Queue {
                 running: Mutex::new(HashMap::new()),
                 wake: Notify::new(),
                 stop: CancellationToken::new(),
+                held: AtomicBool::new(false),
                 ran: AtomicBool::new(false),
                 schedule: Mutex::new(None),
                 auto_paused: Mutex::new(HashSet::new()),
@@ -189,12 +192,53 @@ impl Queue {
         self.inner.stop.is_cancelled()
     }
 
+    /// True between `hold` and `release`.
+    pub fn is_held(&self) -> bool {
+        self.inner.held.load(SeqCst)
+    }
+
+    /// Pauses and saves every running download and starts nothing new, but keeps the dispatcher,
+    /// so `release` can carry on (a shutdown Windows refused). Returns the downloads it paused.
+    pub async fn hold(&self) -> Vec<DownloadId> {
+        self.inner.held.store(true, SeqCst);
+        let mut ids: Vec<DownloadId> = {
+            let running = self.inner.running.lock().unwrap();
+            running
+                .iter()
+                .filter(|(_, r)| !r.removing)
+                .map(|(id, r)| {
+                    r.cancel.cancel();
+                    *id
+                })
+                .collect()
+        };
+        ids.sort_unstable();
+        self.wait_stopped().await;
+        ids
+    }
+
+    /// Undoes `hold`: requeues the downloads it paused (if still paused) and starts the queue again.
+    pub fn release(&self, paused: &[DownloadId]) {
+        for &id in paused {
+            if self.ctx().store.get_download(id).is_ok_and(|d| d.state == DownloadState::Paused) {
+                self.set_state(id, DownloadState::Queued, None);
+            }
+        }
+        self.inner.held.store(false, SeqCst);
+        self.inner.wake.notify_one();
+    }
+
     /// Pauses everything, saves, and stops the dispatcher. Used on app exit.
     pub async fn shutdown(&self) {
         self.inner.stop.cancel();
         for r in self.inner.running.lock().unwrap().values() {
             r.cancel.cancel();
         }
+        self.wait_stopped().await;
+    }
+
+    /// Waits (up to 15 s) for every running download to save and stop.
+    async fn wait_stopped(&self) {
         let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
         while !self.inner.running.lock().unwrap().is_empty() && tokio::time::Instant::now() < deadline {
             tokio::time::sleep(Duration::from_millis(20)).await;
@@ -221,7 +265,7 @@ fn delete_row_and_part(ctx: &TransferCtx, id: DownloadId) {
 
 /// Starts queued downloads while slots are free; emits AllDone once the queue drains.
 fn dispatch(inner: &Arc<Inner>) {
-    if inner.stop.is_cancelled() {
+    if inner.stop.is_cancelled() || inner.held.load(SeqCst) {
         return;
     }
     let allowed =

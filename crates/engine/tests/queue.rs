@@ -313,3 +313,25 @@ async fn removing_running_download_emits_removed() {
     assert!(c.store.get_download(a).is_err(), "row deleted before Removed is sent");
     assert_eq!(part_files(dir.path()), 0);
 }
+
+#[tokio::test]
+async fn hold_saves_and_release_carries_on() {
+    let srv = slow_server(20_000_000, 2_000_000).await;
+    let dir = tempfile::tempdir().unwrap();
+    let c = ctx_on(Store::open_in_memory().unwrap(), TransferConfig::for_tests());
+    let q = Queue::start(c.clone(), 3);
+    let a = q.add(nd(&srv.url, dir.path(), Priority::Normal)).unwrap();
+    wait_state(&c.store, a, DownloadState::Running, 5).await;
+    let held = q.hold().await;
+    assert_eq!(held, vec![a]);
+    assert!(q.is_held());
+    assert_eq!(c.store.get_download(a).unwrap().state, DownloadState::Paused);
+    let b = q.add(nd(&srv.url, dir.path(), Priority::Normal)).unwrap();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(c.store.get_download(b).unwrap().state, DownloadState::Queued, "nothing starts while held");
+    q.release(&held);
+    assert!(!q.is_held());
+    wait_state(&c.store, a, DownloadState::Running, 5).await;
+    wait_state(&c.store, b, DownloadState::Running, 5).await;
+    q.shutdown().await;
+}

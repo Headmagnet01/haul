@@ -302,5 +302,8 @@ pub fn when_done_cancel(app: AppHandle, core: State<'_, AppCore>) -> crate::when
 pub async fn when_done_now(app: AppHandle, core: State<'_, AppCore>) -> R<()> {
     let c = core.inner().clone();
     crate::tray::publish_when_done(&app, crate::when_done::Status::default());
-    c.when_done_now().await.map_err(|e| e.to_string())
+    c.when_done_now().await.map_err(|e| {
+        crate::toast::show(&app, crate::toast::when_done_failed(&e.to_string()));
+        e.to_string()
+    })
 }

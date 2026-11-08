@@ -15,6 +15,11 @@ pub struct ToastSpec {
     pub click_view: Option<&'static str>,
 }
 
+/// The toast when "When done" could not sleep or shut down the PC.
+pub fn when_done_failed(message: &str) -> ToastSpec {
+    ToastSpec { title: "When done didn't work".into(), body: message.into(), open_folder: None, click_view: None }
+}
+
 /// The button's action, sent back to `on_activated`.
 const OPEN: &str = "open";
 
@@ -114,6 +119,15 @@ mod tests {
         assert!(!should_show(&ready, false));
         assert!(should_show(&attention, true));
         assert!(should_show(&attention, false));
+    }
+
+    #[test]
+    fn when_done_failure_toast_says_why() {
+        let s = when_done_failed("Windows didn't shut down (access denied). Haul is still running.");
+        assert_eq!(s.title, "When done didn't work");
+        assert_eq!(s.body, "Windows didn't shut down (access denied). Haul is still running.");
+        assert_eq!(s.open_folder, None);
+        assert_eq!(s.click_view, None);
     }
 
     #[test]
