@@ -15,6 +15,9 @@ export function firefoxManifest(chromium) {
     delete m.options_page;
   }
   m.background = { scripts: ['background.js'], type: 'module' };
-  m.browser_specific_settings = { gecko: { id: GECKO_ID, strict_min_version: '128.0' } };
+  // Nothing is collected: links and cookies go only to Haul on this PC (127.0.0.1).
+  m.browser_specific_settings = {
+    gecko: { id: GECKO_ID, strict_min_version: '128.0', data_collection_permissions: { required: ['none'] } },
+  };
   return m;
 }
