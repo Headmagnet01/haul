@@ -36,8 +36,8 @@ impl AppCore {
         let headers = headers_json(&req);
 
         if self.settings().browser_start == crate::settings::BrowserStart::Collector {
-            // The Collector keeps no headers, so a login-only link shows as Offline there.
-            self.grabber.intake_labelled(vec![req.url.clone()], "browser", None)?;
+            // The link keeps the capture's headers, sealed, so a login-only link checks and starts.
+            self.grabber.intake_capture(req.url.clone(), headers)?;
             self.note_first_download();
             tracing::info!(host = %host, cookies, "captured to the Collector");
             return Ok(0);
@@ -263,6 +263,85 @@ mod tests {
         assert!(c.capture(req("ftp://a.org/f.zip")).is_err());
         assert!(c.capture(req("blob:https://a.org/1234")).is_err());
         assert!(c.store.list_downloads().unwrap().is_empty());
+    }
+
+    fn to_collector(c: &AppCore) {
+        let patch = crate::settings::SettingsPatch {
+            browser_start: Some(crate::settings::BrowserStart::Collector),
+            ..Default::default()
+        };
+        c.set_settings(patch).unwrap();
+    }
+
+    #[tokio::test]
+    async fn collector_capture_keeps_cookies() {
+        let dir = tempfile::tempdir().unwrap();
+        let c = core(dir.path());
+        to_collector(&c);
+        let id = c
+            .capture(CaptureRequest {
+                cookies: Some("sid=1".into()),
+                referrer: Some("https://a.org/page".into()),
+                ..req("https://a.org/f.zip")
+            })
+            .unwrap();
+        assert_eq!(id, 0);
+        let links = c.store.list_links().unwrap();
+        assert_eq!(links.len(), 1);
+        let h = c.store.link_headers(links[0].id).unwrap().expect("headers kept");
+        assert!(h.contains("sid=1") && h.contains("Referer"), "{h}");
+    }
+
+    const COOKIE_FILE_LEN: usize = 300_000;
+
+    /// A file that only downloads with the cookie `sid=1`; anything else gets 401.
+    async fn cookie_only_server() -> String {
+        use axum::http::{HeaderMap, StatusCode, header};
+        use axum::response::IntoResponse;
+        async fn file(headers: HeaderMap) -> axum::response::Response {
+            let ok = headers.get(header::COOKIE).and_then(|v| v.to_str().ok()).is_some_and(|c| c.contains("sid=1"));
+            if !ok {
+                return StatusCode::UNAUTHORIZED.into_response();
+            }
+            ([(header::CONTENT_TYPE, "application/octet-stream")], vec![7u8; COOKIE_FILE_LEN]).into_response()
+        }
+        let app = axum::Router::new().route("/f.bin", axum::routing::get(file));
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = l.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(l, app).await.unwrap() });
+        format!("http://{addr}/f.bin")
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn collector_capture_starts_with_cookies() {
+        let url = cookie_only_server().await;
+        let dir = tempfile::tempdir().unwrap();
+        let c = AppCore::start_with(Store::open_in_memory().unwrap(), dir.path().to_path_buf(), None);
+        to_collector(&c);
+        c.capture(CaptureRequest { cookies: Some("sid=1".into()), ..req(&url) }).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(15);
+        let link = loop {
+            let s = c.collector_snapshot().unwrap();
+            if let Some(l) = s.links.iter().find(|l| l.status != haul_engine::LinkStatus::Checking) {
+                break l.clone();
+            }
+            assert!(Instant::now() < deadline, "link never checked");
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        };
+        assert_eq!(link.status, haul_engine::LinkStatus::Online, "{link:?}");
+        assert_eq!(c.collector_start(&[link.id]).unwrap().started, 1);
+        let deadline = Instant::now() + Duration::from_secs(30);
+        let d = loop {
+            let d = c.store.list_downloads().unwrap().remove(0);
+            if matches!(d.state, DownloadState::Completed | DownloadState::Failed | DownloadState::LinkExpired) {
+                break d;
+            }
+            assert!(Instant::now() < deadline, "download never finished: {d:?}");
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        };
+        assert_eq!(d.state, DownloadState::Completed, "{d:?}");
+        let path = d.target_path.expect("saved");
+        assert_eq!(std::fs::metadata(path).unwrap().len(), COOKIE_FILE_LEN as u64);
     }
 
     #[tokio::test]
