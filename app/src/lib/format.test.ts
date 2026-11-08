@@ -26,7 +26,9 @@ describe('format', () => {
 
   test('format_handles_unknown', () => {
     expect(formatProgress(3_000_000, null)).toBe('3.0 MB');
-    expect(formatProgress(0, 0)).toBe('100.0%');
+    expect(formatProgress(0, 0)).toBe('0.0%');
+    expect(formatProgress(0, 0, true)).toBe('100.0%');
+    expect(formatProgress(38, 100, true)).toBe('100.0%');
     expect(formatProgress(38, 100)).toBe('38.0%');
     expect(formatEta(Infinity)).toBe('—');
     expect(formatEta(NaN)).toBe('—');

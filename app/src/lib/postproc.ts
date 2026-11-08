@@ -26,7 +26,7 @@ export function packageWord(run: Run | null): string | null {
   if (!run) return null;
   switch (run.state) {
     case 'held':
-      return 'Waiting to process';
+      return 'Not processed';
     case 'waiting':
       return 'Re-downloading';
     case 'needs_password':

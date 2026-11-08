@@ -57,7 +57,7 @@
         size: formatBytes(d.size),
         cells: stripCells(d.segments, d.size, d.state),
         kind: stripKind(d.state, d.error),
-        pct: formatProgress(d.written, d.size) + (running ? ` · ${open} conn` : ''),
+        pct: formatProgress(d.written, d.size, d.state === 'completed') + (running ? ` · ${open} conn` : ''),
         speed: running ? formatSpeed(bps) : '—',
         left: running ? formatEta(etaSeconds(d.written, d.size, bps)) : '—',
         status: runStatus(run) ?? statusOf(d),

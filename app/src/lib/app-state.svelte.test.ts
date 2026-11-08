@@ -51,3 +51,29 @@ test('overlapping loads: the newest snapshot wins', async () => {
   await flush();
   expect(app.snapshot.downloads[0].state).toBe('completed');
 });
+
+test('hidden_rows_skip_total_speed', async () => {
+  const f = fake();
+  const app = createAppState(f.b);
+  const first = app.load();
+  f.waiting.shift()!(snap(dl(1, 'running'), dl(2, 'running')));
+  await first;
+  app.removeWithUndo([2]);
+  f.emit(upd({ progress: [{ id: 1, written: 10, size: 100, speedBps: 100, segments: [] }, { id: 2, written: 10, size: 100, speedBps: 200, segments: [] }] }));
+  expect(app.speedHistory.at(-1)).toBe(100);
+  app.undo();
+});
+
+test('last_steal_pruned', async () => {
+  const f = fake();
+  const app = createAppState(f.b);
+  const first = app.load();
+  f.waiting.shift()!(snap(dl(5, 'running')));
+  await first;
+  f.emit(upd({ steals: [{ id: 5, bytes: 1000 }] }));
+  expect(app.lastSteal.has(5)).toBe(true);
+  const second = app.load();
+  f.waiting.shift()!(snap());
+  await second;
+  expect(app.lastSteal.has(5)).toBe(false);
+});

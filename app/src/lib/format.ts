@@ -28,10 +28,11 @@ export function formatEta(seconds: number | null): string {
   return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`;
 }
 
-/** "38.0%", or the bytes written when the size is unknown. */
-export function formatProgress(written: number, size: number | null): string {
+/** "38.0%", or the bytes written when the size is unknown. `done`: the download completed. */
+export function formatProgress(written: number, size: number | null, done = false): string {
   if (size === null) return formatBytes(written);
-  if (size <= 0) return '100.0%';
+  if (done) return '100.0%';
+  if (size <= 0) return '0.0%';
   return `${Math.min(100, Math.max(0, (written / size) * 100)).toFixed(1)}%`;
 }
 

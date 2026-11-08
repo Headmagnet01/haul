@@ -17,7 +17,7 @@ test('step_titles', () => {
 
 test('package_word_for_every_state', () => {
   expect(packageWord(null)).toBeNull();
-  expect(packageWord(run('held'))).toBe('Waiting to process');
+  expect(packageWord(run('held'))).toBe('Not processed');
   expect(packageWord(run('queued'))).toBe('Verifying');
   expect(packageWord(run('running', { verify: 'running' }))).toBe('Verifying');
   expect(packageWord(run('running', { verify: 'skipped', extract: 'running' }))).toBe('Extracting');
@@ -33,7 +33,7 @@ test('run_status_tones', () => {
   expect(runStatus(run('running', { verify: 'running' }))).toEqual({ icon: 'ext', word: 'Verifying', tone: 'signal' });
   expect(runStatus(run('failed'))).toEqual({ icon: 'err', word: 'Needs attention', tone: 'err' });
   expect(runStatus(run('needs_password'))).toEqual({ icon: 'err', word: 'Needs password', tone: 'err' });
-  expect(runStatus(run('held'))).toEqual({ icon: 'wait', word: 'Waiting to process', tone: 'none' });
+  expect(runStatus(run('held'))).toEqual({ icon: 'wait', word: 'Not processed', tone: 'none' });
   expect(runStatus(run('done'))).toBeNull();
   expect(runStatus(null)).toBeNull();
 });

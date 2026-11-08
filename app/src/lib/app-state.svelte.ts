@@ -84,6 +84,7 @@ export function createAppState(backend: Backend) {
       const undoable = new Set(pendingRemoval?.ids ?? []);
       for (const id of [...hidden]) if (!byId.has(id) && !undoable.has(id)) hidden.delete(id);
       for (const id of [...ranges.keys()]) if (!byId.has(id)) { ranges.delete(id); rangeSpeeds.forget(id); }
+      for (const id of [...lastSteal.keys()]) if (!byId.has(id)) lastSteal.delete(id);
       if (selected !== null && !byId.has(selected)) selected = null;
       if (selectedPkg !== null && !snapshot.packages.some((p) => p.id === selectedPkg)) selectedPkg = null;
       loaded = true;
@@ -109,7 +110,7 @@ export function createAppState(backend: Backend) {
     }
     for (const s of u.steals) lastSteal.set(s.id, s.bytes);
     let total = 0;
-    for (const v of speeds.values()) total += v;
+    for (const [id, v] of speeds) if (!hidden.has(id)) total += v;
     speedHistory = [...speedHistory, total].slice(-HISTORY);
     listeners.forEach((cb) => cb(u));
     if (r.resync) requestLoad();
