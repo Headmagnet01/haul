@@ -162,6 +162,15 @@ pub async fn open_extension_folder(app: AppHandle) -> R<()> {
     app.opener().open_path(shown, None::<&str>).map_err(|e| e.to_string())
 }
 
+/// What to say when the add-on's folder has no `.xpi`: installed users can't run npm.
+fn firefox_missing_message(installed: bool) -> &'static str {
+    if installed {
+        "The Firefox add-on is missing from Haul's folder. Reinstall Haul to get it back."
+    } else {
+        "The Firefox add-on wasn't found. Sign it with npm run sign:firefox in the extension folder."
+    }
+}
+
 /// Opens the folder holding the signed Firefox add-on: the bundled `firefox` folder when installed,
 /// the repository's `extension\firefox` in a dev build. Only a folder with the `.xpi` in it counts.
 #[tauri::command]
@@ -172,7 +181,7 @@ pub async fn open_firefox_folder(app: AppHandle) -> R<()> {
     let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../extension/firefox");
     let dir = bundled
         .or_else(|| (cfg!(debug_assertions) && has_xpi(&source)).then_some(source))
-        .ok_or("The Firefox add-on wasn't found. Sign it with npm run sign:firefox in the extension folder.")?;
+        .ok_or(firefox_missing_message(!cfg!(debug_assertions)))?;
     let dir = dir.canonicalize().unwrap_or(dir);
     let shown = dir.to_string_lossy().trim_start_matches(r"\\?\").to_string();
     app.opener().open_path(shown, None::<&str>).map_err(|e| e.to_string())
@@ -353,4 +362,21 @@ pub async fn when_done_now(app: AppHandle, core: State<'_, AppCore>) -> R<()> {
         crate::toast::show(&app, crate::toast::when_done_failed(&e.to_string()));
         e.to_string()
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn firefox_missing_message_fits_the_build() {
+        assert_eq!(
+            firefox_missing_message(true),
+            "The Firefox add-on is missing from Haul's folder. Reinstall Haul to get it back."
+        );
+        assert_eq!(
+            firefox_missing_message(false),
+            "The Firefox add-on wasn't found. Sign it with npm run sign:firefox in the extension folder."
+        );
+    }
 }
