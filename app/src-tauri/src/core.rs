@@ -4,6 +4,7 @@ use crate::dto::{
     Category, CollectorFilters, CollectorSnapshot, Destination, DownloadView, IntakeResult, PackageView,
     PostProcSettings, Rule, RulesConfig, Run, Snapshot, SpeedLimit, StartResult,
 };
+use crate::settings::{Settings, SettingsPatch};
 use haul_engine::postproc::extract::SevenZip;
 use haul_engine::postproc::scan::Defender;
 use haul_engine::postproc::sort::RecycleBin;
@@ -14,19 +15,12 @@ use haul_engine::{
 };
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::Instant;
 
-pub const KEY_SPEED_LIMIT: &str = "speed_limit";
-pub const KEY_DOWNLOAD_DIR: &str = "download_dir";
-pub const KEY_MAX_PARALLEL: &str = "max_parallel";
-pub const KEY_WATCH_CLIPBOARD: &str = "watch_clipboard";
 pub const KEY_COLLECTOR_FILTERS: &str = "collector_filters";
 /// Where a link may come from.
 const SOURCES: [&str; 4] = ["clipboard", "paste", "drop", "browser"];
-const DEFAULT_MAX_PARALLEL: usize = 3;
-pub(crate) const DEFAULT_CONNECTIONS: u32 = 8;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FolderTarget {
@@ -41,8 +35,7 @@ pub struct AppCore {
     ctx: TransferCtx,
     pub(crate) queue: Queue,
     pub(crate) grabber: Grabber,
-    clipboard_on: Arc<AtomicBool>,
-    pub(crate) download_dir: PathBuf,
+    settings: Arc<RwLock<Settings>>,
     postproc: PostProc,
     /// Browser captures in the last few seconds, by URL: (download id, when).
     pub(crate) recent: Arc<Mutex<HashMap<String, (i64, Instant)>>>,
@@ -149,24 +142,9 @@ impl AppCore {
         prober: ProbeFn,
         deps: PostProcDeps,
     ) -> AppCore {
-        let limit: SpeedLimit = store
-            .get_setting(KEY_SPEED_LIMIT)
-            .ok()
-            .flatten()
-            .and_then(|v| serde_json::from_value(v).ok())
-            .unwrap_or_default();
-        let download_dir = store
-            .get_setting(KEY_DOWNLOAD_DIR)
-            .ok()
-            .flatten()
-            .and_then(|v| v.as_str().map(PathBuf::from))
-            .unwrap_or(default_download_dir);
-        let max_parallel = store
-            .get_setting(KEY_MAX_PARALLEL)
-            .ok()
-            .flatten()
-            .and_then(|v| v.as_u64())
-            .map_or(DEFAULT_MAX_PARALLEL, |n| n as usize);
+        let has_downloads = store.list_downloads().is_ok_and(|d| !d.is_empty());
+        let settings = Settings::load(&store, default_download_dir, has_downloads);
+        let limit = settings.speed_limit;
         let ctx = TransferCtx {
             client: haul_engine::http_client(),
             store: store.clone(),
@@ -175,20 +153,21 @@ impl AppCore {
             hosts: Arc::new(HostLimiter::new(16)),
             config: TransferConfig::default(),
         };
-        let queue = Queue::start(ctx.clone(), max_parallel);
+        let queue = Queue::start(ctx.clone(), settings.max_parallel);
+        // Tests pass a schedule that never opens; otherwise the saved one applies.
+        let schedule = schedule.or_else(|| settings.schedule.clone());
         if schedule.is_some() {
             queue.set_schedule(schedule);
         }
         let grabber = Grabber::new(store.clone(), ctx.events.clone(), prober);
-        let watch = store.get_setting(KEY_WATCH_CLIPBOARD).ok().flatten().and_then(|v| v.as_bool()).unwrap_or(false);
-        let postproc = PostProc::start(store.clone(), ctx.events.clone(), queue.clone(), deps, download_dir.clone());
+        let postproc =
+            PostProc::start(store.clone(), ctx.events.clone(), queue.clone(), deps, settings.download_dir.clone());
         AppCore {
             store,
             ctx,
             queue,
             grabber,
-            clipboard_on: Arc::new(AtomicBool::new(watch)),
-            download_dir,
+            settings: Arc::new(RwLock::new(settings)),
             postproc,
             recent: Arc::default(),
         }
@@ -198,13 +177,47 @@ impl AppCore {
         self.ctx.events.clone()
     }
 
+    pub fn settings(&self) -> Settings {
+        self.settings.read().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
+    /// Validates, saves and applies `patch`; returns the whole record. Nothing is saved if any field is invalid.
+    /// Autostart is applied by the command layer, which has the app handle.
+    pub fn set_settings(&self, patch: SettingsPatch) -> Result<Settings, EngineError> {
+        let patch = crate::settings::validate(patch).map_err(|m| invalid(&m))?;
+        let mut guard = self.settings.write().unwrap_or_else(|e| e.into_inner());
+        let mut next = guard.clone();
+        next.apply(&patch);
+        next.save(&self.store, &patch)?;
+        *guard = next.clone();
+        drop(guard);
+        if patch.max_parallel.is_some() {
+            self.queue.set_max_parallel(next.max_parallel);
+        }
+        if patch.speed_limit.is_some() {
+            self.queue.set_global_limit(next.speed_limit.enabled.then_some(next.speed_limit.bps));
+        }
+        if patch.schedule.is_some() {
+            self.queue.set_schedule(next.schedule.clone());
+        }
+        if patch.download_dir.is_some() {
+            self.postproc.set_download_dir(next.download_dir.clone());
+        }
+        Ok(next)
+    }
+
+    /// Where new downloads go.
+    pub(crate) fn download_dir(&self) -> PathBuf {
+        self.settings.read().unwrap_or_else(|e| e.into_inner()).download_dir.clone()
+    }
+
+    /// Connections for a new download.
+    pub(crate) fn connections(&self) -> u32 {
+        self.settings.read().unwrap_or_else(|e| e.into_inner()).connections
+    }
+
     fn speed_limit(&self) -> SpeedLimit {
-        self.store
-            .get_setting(KEY_SPEED_LIMIT)
-            .ok()
-            .flatten()
-            .and_then(|v| serde_json::from_value(v).ok())
-            .unwrap_or_default()
+        self.settings.read().unwrap_or_else(|e| e.into_inner()).speed_limit
     }
 
     fn view(&self, d: Download, segs: &[haul_engine::Range]) -> DownloadView {
@@ -286,7 +299,7 @@ impl AppCore {
     }
 
     pub fn collector_start(&self, ids: &[i64]) -> Result<StartResult, EngineError> {
-        let d = StartDefaults { target_dir: self.download_dir.clone(), connections: DEFAULT_CONNECTIONS };
+        let d = StartDefaults { target_dir: self.download_dir(), connections: self.connections() };
         Ok(StartResult { started: self.grabber.start(ids, &self.queue, &d)? })
     }
 
@@ -303,14 +316,8 @@ impl AppCore {
         self.store.set_setting(KEY_COLLECTOR_FILTERS, &json(&f)?)
     }
 
-    pub fn set_watch_clipboard(&self, on: bool) -> Result<(), EngineError> {
-        self.store.set_setting(KEY_WATCH_CLIPBOARD, &serde_json::Value::Bool(on))?;
-        self.clipboard_on.store(on, Ordering::Relaxed);
-        Ok(())
-    }
-
     pub fn watch_clipboard(&self) -> bool {
-        self.clipboard_on.load(Ordering::Relaxed)
+        self.settings.read().unwrap_or_else(|e| e.into_inner()).watch_clipboard
     }
 
     pub fn pause(&self, ids: &[i64]) {
@@ -340,13 +347,6 @@ impl AppCore {
 
     pub fn reorder(&self, ids: &[i64]) {
         self.queue.reorder(ids);
-    }
-
-    pub fn set_speed_limit(&self, limit: SpeedLimit) -> Result<(), EngineError> {
-        let v = serde_json::to_value(limit).map_err(|e| EngineError::Io(std::io::Error::other(e)))?;
-        self.store.set_setting(KEY_SPEED_LIMIT, &v)?;
-        self.queue.set_global_limit(limit.enabled.then_some(limit.bps));
-        Ok(())
     }
 
     pub fn folder_target(&self, id: i64) -> Result<FolderTarget, EngineError> {
@@ -410,7 +410,7 @@ impl AppCore {
     ) -> Result<Destination, EngineError> {
         let facts =
             haul_engine::rules::Facts { name, host, size, package: "Package", date: chrono::Local::now().date_naive() };
-        haul_engine::postproc::try_rules(&facts, rules, categories, sort, &self.download_dir)
+        haul_engine::postproc::try_rules(&facts, rules, categories, sort, &self.download_dir())
             .map_err(EngineError::Invalid)
     }
 
@@ -455,10 +455,10 @@ mod tests {
                 package_id: None,
                 url: "https://a.org/f.bin".into(),
                 headers_json: None,
-                target_dir: c.download_dir.clone(),
+                target_dir: c.download_dir(),
                 file_name: None,
                 priority: Priority::Normal,
-                connections: DEFAULT_CONNECTIONS,
+                connections: c.connections(),
                 speed_limit: None,
             })
             .unwrap();
@@ -580,7 +580,7 @@ mod tests {
         let c = core_fake(store.clone(), dir.path());
         assert!(!c.watch_clipboard());
         assert!(!c.collector_snapshot().unwrap().watch_clipboard);
-        c.set_watch_clipboard(true).unwrap();
+        c.set_settings(crate::settings::SettingsPatch { watch_clipboard: Some(true), ..Default::default() }).unwrap();
         assert!(c.watch_clipboard());
         c.shutdown().await;
         let fresh = core_fake(store, dir.path());
@@ -686,7 +686,11 @@ mod tests {
         let store = Store::open_in_memory().unwrap();
         let c = core(store.clone(), dir.path());
         assert_eq!(c.snapshot().unwrap().speed_limit, SpeedLimit { enabled: false, bps: 10_000_000 });
-        c.set_speed_limit(SpeedLimit { enabled: true, bps: 5_000_000 }).unwrap();
+        c.set_settings(crate::settings::SettingsPatch {
+            speed_limit: Some(SpeedLimit { enabled: true, bps: 5_000_000 }),
+            ..Default::default()
+        })
+        .unwrap();
         assert_eq!(c.ctx.global_limit.rate(), Some(5_000_000));
         c.shutdown().await;
         let fresh = core(store, dir.path());
@@ -726,5 +730,125 @@ mod tests {
         queue_one(&c);
         let id = c.snapshot().unwrap().downloads[0].id;
         assert_eq!(c.folder_target(id).unwrap(), FolderTarget::OpenDir(dir.path().to_path_buf()));
+    }
+
+    fn patch() -> crate::settings::SettingsPatch {
+        crate::settings::SettingsPatch::default()
+    }
+
+    #[tokio::test]
+    async fn folder_change_applies_to_next_download() {
+        let a = tempfile::tempdir().unwrap();
+        let b = tempfile::tempdir().unwrap();
+        let c = core_fake(Store::open_in_memory().unwrap(), a.path());
+        queue_one(&c);
+        let s =
+            c.set_settings(crate::settings::SettingsPatch { download_dir: Some(b.path().into()), ..patch() }).unwrap();
+        assert_eq!(s.download_dir, b.path());
+        c.add_links("https://a.org/2.bin", "paste").unwrap();
+        let ids: Vec<i64> = wait_checked(&c).await.links.iter().map(|l| l.id).collect();
+        c.collector_start(&ids).unwrap();
+        let ds = c.store.list_downloads().unwrap();
+        let dir_of = |u: &str| ds.iter().find(|d| d.url.ends_with(u)).unwrap().target_dir.clone();
+        assert_eq!(dir_of("f.bin"), a.path());
+        assert_eq!(dir_of("2.bin"), b.path());
+    }
+
+    #[tokio::test]
+    async fn connections_apply_to_next_download() {
+        let dir = tempfile::tempdir().unwrap();
+        let c = core_fake(Store::open_in_memory().unwrap(), dir.path());
+        c.set_settings(crate::settings::SettingsPatch { connections: Some(3), ..patch() }).unwrap();
+        c.add_links("https://a.org/2.bin", "paste").unwrap();
+        let ids: Vec<i64> = wait_checked(&c).await.links.iter().map(|l| l.id).collect();
+        c.collector_start(&ids).unwrap();
+        assert_eq!(c.store.list_downloads().unwrap()[0].connections, 3);
+    }
+
+    #[tokio::test]
+    async fn unwritable_folder_refused_nothing_saved() {
+        let dir = tempfile::tempdir().unwrap();
+        let c = core_fake(Store::open_in_memory().unwrap(), dir.path());
+        let e = c
+            .set_settings(crate::settings::SettingsPatch {
+                download_dir: Some(dir.path().join("gone")),
+                max_parallel: Some(7),
+                ..patch()
+            })
+            .unwrap_err();
+        assert!(e.to_string().contains("downloadDir:"), "{e}");
+        assert_eq!(c.settings().max_parallel, 3);
+        assert_eq!(c.settings().download_dir, dir.path());
+    }
+
+    #[tokio::test]
+    async fn settings_survive_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open_in_memory().unwrap();
+        let c = core_fake(store.clone(), dir.path());
+        c.set_settings(crate::settings::SettingsPatch { max_parallel: Some(6), close_to_tray: Some(false), ..patch() })
+            .unwrap();
+        c.shutdown().await;
+        let s = core_fake(store, dir.path()).settings();
+        assert_eq!(s.max_parallel, 6);
+        assert!(!s.close_to_tray);
+    }
+
+    #[tokio::test]
+    async fn clipboard_switch_is_the_setting() {
+        let dir = tempfile::tempdir().unwrap();
+        let c = core_fake(Store::open_in_memory().unwrap(), dir.path());
+        c.set_settings(crate::settings::SettingsPatch { watch_clipboard: Some(true), ..patch() }).unwrap();
+        assert!(c.watch_clipboard());
+        assert!(c.collector_snapshot().unwrap().watch_clipboard);
+    }
+
+    #[tokio::test]
+    async fn speed_limit_is_the_setting() {
+        let dir = tempfile::tempdir().unwrap();
+        let c = core_fake(Store::open_in_memory().unwrap(), dir.path());
+        let l = SpeedLimit { enabled: true, bps: 5000 };
+        c.set_settings(crate::settings::SettingsPatch { speed_limit: Some(l), ..patch() }).unwrap();
+        assert_eq!(c.snapshot().unwrap().speed_limit, l);
+    }
+
+    #[tokio::test]
+    async fn browser_start_collector_sends_capture_to_collector() {
+        let dir = tempfile::tempdir().unwrap();
+        let c = core_fake(Store::open_in_memory().unwrap(), dir.path());
+        c.set_settings(crate::settings::SettingsPatch {
+            browser_start: Some(crate::settings::BrowserStart::Collector),
+            ..patch()
+        })
+        .unwrap();
+        c.capture(crate::dto::CaptureRequest {
+            url: "https://a.org/f.zip".into(),
+            filename: None,
+            size: None,
+            referrer: None,
+            user_agent: None,
+            cookies: None,
+        })
+        .unwrap();
+        assert!(c.store.list_downloads().unwrap().is_empty());
+        let links = wait_checked(&c).await.links;
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].url, "https://a.org/f.zip");
+    }
+
+    #[tokio::test]
+    async fn start_with_missing_folder_keeps_the_setting() {
+        let dir = tempfile::tempdir().unwrap();
+        let gone = dir.path().join("usb");
+        std::fs::create_dir(&gone).unwrap();
+        let store = Store::open_in_memory().unwrap();
+        let c = core_fake(store.clone(), dir.path());
+        c.set_settings(crate::settings::SettingsPatch { download_dir: Some(gone.clone()), ..patch() }).unwrap();
+        c.shutdown().await;
+        std::fs::remove_dir(&gone).unwrap();
+        let c = core_fake(store, dir.path());
+        assert_eq!(c.settings().download_dir, gone);
+        queue_one(&c);
+        assert_eq!(c.store.list_downloads().unwrap()[0].target_dir, gone);
     }
 }

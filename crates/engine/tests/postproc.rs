@@ -485,3 +485,12 @@ async fn package_with_unfinished_file_waits() {
     tokio::time::sleep(Duration::from_millis(300)).await;
     assert!(h.pp.runs().unwrap().is_empty());
 }
+
+#[tokio::test]
+async fn download_dir_can_change() {
+    let h = harness();
+    assert_eq!(h.pp.download_dir(), h.dl);
+    let other = h.dl.join("other");
+    h.pp.set_download_dir(other.clone());
+    assert_eq!(h.pp.download_dir(), other);
+}

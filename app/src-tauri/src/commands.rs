@@ -7,8 +7,9 @@ use crate::api::pairing::PairGate;
 use crate::core::{AppCore, FolderTarget};
 use crate::dto::{
     Category, CollectorFilters, CollectorSnapshot, Destination, IntakeResult, PairedClientView, PostProcSettings, Rule,
-    RulesConfig, Run, Snapshot, SpeedLimit, StartResult,
+    RulesConfig, Run, Snapshot, StartResult,
 };
+use crate::settings::{Settings, SettingsPatch};
 use tauri::{AppHandle, State};
 use tauri_plugin_opener::OpenerExt;
 
@@ -20,6 +21,16 @@ async fn blocking<T: Send + 'static>(
 ) -> R<T> {
     let c = core.inner().clone();
     tauri::async_runtime::spawn_blocking(move || f(c)).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn settings(core: State<'_, AppCore>) -> R<Settings> {
+    blocking(&core, |c| Ok(c.settings())).await
+}
+
+#[tauri::command]
+pub async fn set_settings(core: State<'_, AppCore>, patch: SettingsPatch) -> R<Settings> {
+    blocking(&core, move |c| c.set_settings(patch).map_err(|e| e.to_string())).await
 }
 
 #[tauri::command]
@@ -55,11 +66,6 @@ pub async fn collector_recheck(core: State<'_, AppCore>, ids: Vec<i64>) -> R<()>
 #[tauri::command]
 pub async fn set_collector_filters(core: State<'_, AppCore>, filters: CollectorFilters) -> R<()> {
     blocking(&core, move |c| c.set_collector_filters(filters).map_err(|e| e.to_string())).await
-}
-
-#[tauri::command]
-pub async fn set_watch_clipboard(core: State<'_, AppCore>, on: bool) -> R<()> {
-    blocking(&core, move |c| c.set_watch_clipboard(on).map_err(|e| e.to_string())).await
 }
 
 #[tauri::command]
@@ -110,11 +116,6 @@ pub async fn reorder(core: State<'_, AppCore>, ids: Vec<i64>) -> R<()> {
         Ok(())
     })
     .await
-}
-
-#[tauri::command]
-pub async fn set_speed_limit(core: State<'_, AppCore>, enabled: bool, bps: u64) -> R<()> {
-    blocking(&core, move |c| c.set_speed_limit(SpeedLimit { enabled, bps }).map_err(|e| e.to_string())).await
 }
 
 #[tauri::command]

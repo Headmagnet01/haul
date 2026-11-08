@@ -7,6 +7,7 @@ pub mod clipboard;
 pub mod commands;
 pub mod core;
 pub mod dto;
+pub mod settings;
 
 use crate::api::pairing::PairGate;
 use crate::api::server::{ApiHandle, DEFAULT_PORTS, OnPair, PairEvent, start_api};
@@ -60,14 +61,14 @@ pub fn run() {
             commands::pause_all,
             commands::set_priority,
             commands::reorder,
-            commands::set_speed_limit,
             commands::open_folder,
             commands::collector_snapshot,
             commands::collector_start,
             commands::collector_remove,
             commands::collector_recheck,
             commands::set_collector_filters,
-            commands::set_watch_clipboard,
+            commands::settings,
+            commands::set_settings,
             commands::postproc_runs,
             commands::postproc_process,
             commands::postproc_retry,

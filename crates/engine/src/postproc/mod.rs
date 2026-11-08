@@ -80,7 +80,7 @@ struct Inner {
     events: EventBus,
     queue: Queue,
     deps: PostProcDeps,
-    download_dir: PathBuf,
+    download_dir: std::sync::RwLock<PathBuf>,
     wake: Notify,
     /// A password typed in the drawer, tried once on the next run of that extract step.
     given: Mutex<HashMap<i64, (String, bool)>>,
@@ -205,7 +205,7 @@ impl PostProc {
             events,
             queue,
             deps,
-            download_dir,
+            download_dir: std::sync::RwLock::new(download_dir),
             wake: Notify::new(),
             given: Mutex::new(HashMap::new()),
             turn: Mutex::new(()),
@@ -387,8 +387,13 @@ impl PostProc {
         self.inner.store.order_passwords(ids)
     }
 
-    pub fn download_dir(&self) -> &Path {
-        &self.inner.download_dir
+    pub fn download_dir(&self) -> PathBuf {
+        self.inner.download_dir.read().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
+    /// The folder relative rule and category folders sit in, from now on.
+    pub fn set_download_dir(&self, dir: PathBuf) {
+        *self.inner.download_dir.write().unwrap_or_else(|e| e.into_inner()) = dir;
     }
 }
 
@@ -501,7 +506,7 @@ impl Inner {
             .iter()
             .find_map(|d| d.target_path.as_ref().and_then(|p| p.parent()).map(Path::to_path_buf))
             .or_else(|| members.first().map(|d| d.target_dir.clone()))
-            .unwrap_or_else(|| self.download_dir.clone());
+            .unwrap_or_else(|| self.download_dir.read().unwrap_or_else(|e| e.into_inner()).clone());
         Ok(Target { name: crate::naming::sanitize_filename(&name), dir, members })
     }
 
@@ -816,7 +821,7 @@ impl Inner {
         let cats = self.categories();
         let date = chrono::Local::now().date_naive();
         let pkg_host = t.members.first().map(host_of).unwrap_or_default();
-        let base = self.download_dir.clone();
+        let base = self.download_dir.read().unwrap_or_else(|e| e.into_inner()).clone();
         let package = t.name.clone();
         let place = |name: &str, size: Option<u64>, host: &str| -> Destination {
             let f = Facts { name, host, size, package: &package, date };

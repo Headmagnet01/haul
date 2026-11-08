@@ -1,7 +1,7 @@
 //! Downloads and links that arrive from the browser extension.
 
 use crate::api::guard::{hash_token, new_token};
-use crate::core::{AppCore, DEFAULT_CONNECTIONS};
+use crate::core::AppCore;
 use crate::dto::{CaptureRequest, IntakeResult, PairedClientView};
 use haul_engine::{DownloadState, EngineError, NewDownload, Priority};
 use std::time::{Duration, Instant};
@@ -35,6 +35,12 @@ impl AppCore {
         let cookies = req.cookies.as_deref().map_or(0, |c| c.split(';').filter(|p| !p.trim().is_empty()).count());
         let headers = headers_json(&req);
 
+        if self.settings().browser_start == crate::settings::BrowserStart::Collector {
+            // The Collector keeps no headers, so a login-only link shows as Offline there.
+            self.grabber.intake_labelled(vec![req.url.clone()], "browser", None)?;
+            tracing::info!(host = %host, cookies, "captured to the Collector");
+            return Ok(0);
+        }
         let mut recent = self.recent.lock().unwrap_or_else(|e| e.into_inner());
         recent.retain(|_, (_, at)| at.elapsed() < SAME_CAPTURE);
         if let Some((id, _)) = recent.get(&req.url) {
@@ -58,10 +64,10 @@ impl AppCore {
                     package_id: None,
                     url: req.url.clone(),
                     headers_json: headers,
-                    target_dir: self.download_dir.clone(),
+                    target_dir: self.download_dir(),
                     file_name: name.clone(),
                     priority: Priority::Normal,
-                    connections: DEFAULT_CONNECTIONS,
+                    connections: self.connections(),
                     speed_limit: None,
                 })?;
                 tracing::info!(host = %host, file = name.as_deref().unwrap_or(""), cookies, "captured from the browser");
