@@ -10,7 +10,7 @@ mod run;
 pub mod scan;
 pub mod sort;
 
-pub use run::{Run, RunState, Step, StepKind, StepState};
+pub use run::{Run, RunData, RunState, Step, StepKind, StepState};
 
 use crate::error::EngineError;
 use crate::events::EventBus;
@@ -24,7 +24,6 @@ use crate::store::{Download, RunRow, Store};
 use crate::types::{DownloadId, DownloadState, Event, PackageId};
 use checksum::{Algo, hash_file, is_checksum_file, parse_checksum_file, parse_pasted, parse_tagged, tagged};
 use extract::{ExtractOutcome, Extractor, first_volumes, is_archive_name};
-use run::RunData;
 use scan::{ScanOutcome, Scanner};
 use serde::{Deserialize, Serialize};
 use sort::{Recycler, move_item};

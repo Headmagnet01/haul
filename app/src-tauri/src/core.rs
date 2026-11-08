@@ -387,43 +387,83 @@ impl AppCore {
 
     pub fn folder_target(&self, id: i64) -> Result<FolderTarget, EngineError> {
         let d = self.store.get_download(id)?;
-        Ok(match d.target_path {
-            Some(p) if d.state == DownloadState::Completed => FolderTarget::RevealFile(p),
+        Ok(match d.target_path.clone() {
+            Some(p) if d.state == DownloadState::Completed => {
+                // An archive recycled after extracting: show the folder it became.
+                let runs = self.store.list_runs().unwrap_or_default();
+                FolderTarget::RevealFile(if p.exists() { p } else { self.extracted_folder(&runs, &d).unwrap_or(p) })
+            }
             _ => FolderTarget::OpenDir(d.target_dir),
         })
     }
 
-    /// A completed download's saved file, if it is still on disk.
+    /// A completed download's saved file (or, once its archive is gone, the folder Haul extracted it into),
+    /// if it is still on disk.
     pub fn finished_file(&self, id: i64) -> Result<PathBuf, EngineError> {
         let d = self.store.get_download(id)?;
-        match d.target_path {
+        match d.target_path.clone() {
             Some(p) if d.state == DownloadState::Completed && p.exists() => Ok(p),
+            Some(_) if d.state == DownloadState::Completed => self
+                .extracted_folder(&self.store.list_runs().unwrap_or_default(), &d)
+                .ok_or_else(|| invalid("That file is no longer on disk.")),
             _ => Err(invalid("That file is no longer on disk.")),
         }
     }
 
+    /// The folder post-processing extracted `d`'s package (or lone download) into, if it is still there.
+    /// Never the download folder or the folder the download itself was saved in.
+    fn extracted_folder(&self, runs: &[haul_engine::store::RunRow], d: &Download) -> Option<PathBuf> {
+        let run = runs
+            .iter()
+            .find(|r| r.package_id == d.package_id && (d.package_id.is_some() || r.download_id == Some(d.id)))?;
+        let data: haul_engine::postproc::RunData = serde_json::from_str(&run.steps_json).ok()?;
+        let out = PathBuf::from(data.extracted_to?);
+        let same = |a: &Path, b: &Path| match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
+            (Ok(a), Ok(b)) => a == b,
+            _ => a == b,
+        };
+        (out.is_dir() && !same(&out, &self.download_dir()) && !same(&out, &d.target_dir)).then_some(out)
+    }
+
     /// The ids among `ids` whose saved file exists. A file a newer download saved at the same
     /// path (the old one was deleted by hand) belongs to that newer row, not to the stale one.
+    /// A finished archive whose extracted folder is still there counts as present.
     pub fn files_exist(&self, ids: &[i64]) -> Vec<i64> {
         let all = self.store.list_downloads().unwrap_or_default();
-        ids.iter()
-            .copied()
-            .filter(|&id| {
-                let Some(p) = all.iter().find(|d| d.id == id).and_then(|d| d.target_path.as_ref()) else {
-                    return false;
-                };
-                p.exists() && !all.iter().any(|o| o.id > id && o.target_path.as_ref() == Some(p))
-            })
-            .collect()
+        let runs = self.store.list_runs().unwrap_or_default();
+        let present = |d: &Download| {
+            let own = d
+                .target_path
+                .as_ref()
+                .is_some_and(|p| p.exists() && !all.iter().any(|o| o.id > d.id && o.target_path.as_ref() == Some(p)));
+            own || (d.state == DownloadState::Completed && self.extracted_folder(&runs, d).is_some())
+        };
+        ids.iter().copied().filter(|&id| all.iter().find(|d| d.id == id).is_some_and(present)).collect()
     }
 
     /// Sends each saved file to the Recycle Bin, then deletes its row. A file already gone is not an error,
     /// and neither is one another download (not being deleted) saved at the same path: it is left alone.
+    /// When every download of an extracted package (or a lone extracted download) is deleted, the folder
+    /// Haul extracted it into goes to the Recycle Bin too, first.
     /// Stops at the first failure, leaving that row and the ones after it.
     pub fn delete_files(&self, ids: &[i64]) -> Result<(), String> {
         let all = self.store.list_downloads().map_err(|e| e.to_string())?;
         let shared = |p: &PathBuf| all.iter().any(|o| !ids.contains(&o.id) && o.target_path.as_ref() == Some(p));
         let mut recycled: HashSet<PathBuf> = HashSet::new();
+        let runs = self.store.list_runs().map_err(|e| e.to_string())?;
+        for d in all.iter().filter(|d| ids.contains(&d.id)) {
+            let whole = d
+                .package_id
+                .is_none_or(|p| all.iter().filter(|o| o.package_id == Some(p)).all(|o| ids.contains(&o.id)));
+            if let Some(out) = self.extracted_folder(&runs, d).filter(|o| whole && !recycled.contains(o)) {
+                if let Err(e) = self.recycler.recycle(std::slice::from_ref(&out)) {
+                    let name =
+                        out.file_name().map_or_else(|| out.display().to_string(), |n| n.to_string_lossy().into_owned());
+                    return Err(if in_use(&e) { format!("{name} is in use") } else { format!("{name}: {e}") });
+                }
+                recycled.insert(out);
+            }
+        }
         for &id in ids {
             let d = self.store.get_download(id).map_err(|e| e.to_string())?;
             if let Some(p) = d.target_path.clone().filter(|p| p.exists() && !shared(p) && !recycled.contains(p)) {
@@ -1158,6 +1198,78 @@ mod tests {
         c.delete_files(&[old2, new]).unwrap();
         assert_eq!(*bin.seen.lock().unwrap(), vec![path]);
         assert!(c.store.list_downloads().unwrap().is_empty());
+    }
+
+    /// A finished two-file package `pkg` in `dir`, whose run extracted it into `out`.
+    fn extracted_package(c: &AppCore, dir: &std::path::Path, out: &std::path::Path) -> Vec<i64> {
+        let pkg = c.store.create_package("pkg", "paste").unwrap();
+        let mut ids = Vec::new();
+        for name in ["pkg.7z.001", "pkg.7z.002"] {
+            let id = c
+                .queue
+                .add(haul_engine::NewDownload {
+                    package_id: Some(pkg),
+                    url: format!("https://a.org/{name}"),
+                    headers_json: None,
+                    target_dir: dir.to_path_buf(),
+                    file_name: None,
+                    priority: Priority::Normal,
+                    connections: 1,
+                    speed_limit: None,
+                })
+                .unwrap();
+            let path = dir.join(name);
+            std::fs::write(&path, b"x").unwrap();
+            c.store.set_completed(id, &path).unwrap();
+            ids.push(id);
+        }
+        std::fs::create_dir_all(out).unwrap();
+        let data = haul_engine::postproc::RunData {
+            extracted_to: Some(out.to_string_lossy().into_owned()),
+            ..haul_engine::postproc::RunData::fresh()
+        };
+        c.store.ensure_run(Some(pkg), None, "done", &serde_json::to_string(&data).unwrap()).unwrap();
+        ids
+    }
+
+    #[tokio::test]
+    async fn delete_package_recycles_extracted_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let bin = Arc::new(FakeBin::default());
+        let c = core(Store::open_in_memory().unwrap(), dir.path()).with_recycler(bin.clone());
+        let out = dir.path().join("pkg");
+        let ids = extracted_package(&c, dir.path(), &out);
+        // Part of the package: the folder stays.
+        c.delete_files(&ids[..1]).unwrap();
+        assert!(!bin.seen.lock().unwrap().contains(&out));
+        c.delete_files(&ids[1..]).unwrap();
+        assert!(bin.seen.lock().unwrap().contains(&out), "extracted folder not recycled");
+    }
+
+    #[tokio::test]
+    async fn extracted_folder_counts_when_archives_are_gone() {
+        let dir = tempfile::tempdir().unwrap();
+        let c = core(Store::open_in_memory().unwrap(), dir.path());
+        let out = dir.path().join("pkg");
+        let ids = extracted_package(&c, dir.path(), &out);
+        for name in ["pkg.7z.001", "pkg.7z.002"] {
+            std::fs::remove_file(dir.path().join(name)).unwrap();
+        }
+        assert_eq!(c.files_exist(&ids), ids);
+        assert_eq!(c.folder_target(ids[0]).unwrap(), FolderTarget::RevealFile(out.clone()));
+        std::fs::remove_dir(&out).unwrap();
+        assert!(c.files_exist(&ids).is_empty());
+    }
+
+    #[tokio::test]
+    async fn extracted_into_download_folder_is_never_recycled() {
+        let dir = tempfile::tempdir().unwrap();
+        let bin = Arc::new(FakeBin::default());
+        let c = core(Store::open_in_memory().unwrap(), dir.path()).with_recycler(bin.clone());
+        let ids = extracted_package(&c, dir.path(), dir.path());
+        c.delete_files(&ids).unwrap();
+        assert!(!bin.seen.lock().unwrap().iter().any(|p| p == dir.path()));
+        assert_eq!(bin.seen.lock().unwrap().len(), 2);
     }
 
     #[tokio::test]
