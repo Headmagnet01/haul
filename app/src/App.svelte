@@ -1,9 +1,12 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import Rail, { VIEWS } from './components/Rail.svelte';
   import Placeholder from './components/Placeholder.svelte';
   import QueueView from './components/QueueView.svelte';
   import CollectorView from './components/CollectorView.svelte';
   import RulesView from './components/RulesView.svelte';
+  import SettingsView from './components/SettingsView.svelte';
+  import { createSettingsState } from './lib/settings-state.svelte';
   import { createRulesState } from './lib/rules-state.svelte';
   import Toast from './components/Toast.svelte';
   import PairDialog from './components/PairDialog.svelte';
@@ -26,6 +29,24 @@
   const rules = createRulesState(app.backend, { showToast: (t) => app.showToast(t) });
   $effect(() => {
     if (app.view === 'rules') void rules.load();
+  });
+  // The status bar's toggles and the Settings page are one setting; reload whichever didn't change.
+  const settings = createSettingsState(app.backend, {
+    onChanged: (p) => {
+      if (p.watchClipboard !== undefined) void collector.load();
+      if (p.speedLimit !== undefined) void app.load();
+    },
+  });
+  $effect(() => {
+    if (app.view === 'settings') void settings.load();
+  });
+  $effect(() => {
+    const watchClipboard = collector.snapshot.watchClipboard;
+    untrack(() => settings.mirror({ watchClipboard }));
+  });
+  $effect(() => {
+    const speedLimit = { ...app.snapshot.speedLimit };
+    untrack(() => settings.mirror({ speedLimit }));
   });
 
   // Bumped when a pairing is answered, so the Browsers list reloads.
@@ -76,7 +97,9 @@
   {:else if app.view === 'collector'}
     <CollectorView c={collector} />
   {:else if app.view === 'rules'}
-    <RulesView rs={rules} backend={app.backend} {browsersRev} />
+    <RulesView rs={rules} backend={app.backend} />
+  {:else if app.view === 'settings'}
+    <SettingsView ss={settings} backend={app.backend} {browsersRev} />
   {:else}
     <Placeholder title={label} />
   {/if}

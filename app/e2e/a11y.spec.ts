@@ -98,7 +98,7 @@ test('pairing_dialog_and_browsers_have_no_violations', async ({ page }) => {
   const d = await new AxeBuilder({ page }).include('[role="alertdialog"]').withTags(['wcag2a', 'wcag2aa']).analyze();
   expect(d.violations.flatMap((v) => v.nodes.map((n) => `${v.id} ${n.target.join(' ')}: ${n.failureSummary}`))).toEqual([]);
   await page.getByRole('alertdialog').getByRole('button', { name: 'Allow' }).click();
-  await page.getByRole('navigation', { name: 'Views' }).getByRole('button', { name: 'Rules' }).click();
+  await page.getByRole('navigation', { name: 'Views' }).getByRole('button', { name: 'Settings' }).click();
   await expect(page.getByRole('region', { name: 'Browsers' }).getByRole('listitem')).toHaveCount(1);
   const r = await new AxeBuilder({ page }).include('main').withTags(['wcag2a', 'wcag2aa']).analyze();
   expect(r.violations.flatMap((v) => v.nodes.map((n) => `${v.id} ${n.target.join(' ')}: ${n.failureSummary}`))).toEqual([]);

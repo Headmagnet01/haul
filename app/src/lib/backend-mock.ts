@@ -1,7 +1,9 @@
 // A small simulated engine for the browser and the tests. Deterministic: sizes and speeds come from the URL.
 
 import type { Backend } from './backend';
-import type { DownloadView, PackageView, PairedClient, PriorityName, Seg, Snapshot, SpeedLimit, State, Update } from './types';
+import type {
+  DownloadView, PackageView, PairedClient, PriorityName, Seg, Settings, SettingsPatch, Snapshot, SpeedLimit, State, Update,
+} from './types';
 import { createMockCollector } from './backend-mock-collector';
 import { createMockPostproc } from './backend-mock-postproc';
 
@@ -66,6 +68,30 @@ function nameFromUrl(url: string): string {
   } catch {
     return 'download';
   }
+}
+
+const SETTINGS_KEY = 'haul.mock.settings';
+
+function save(key: string, v: unknown) {
+  try {
+    globalThis.sessionStorage?.setItem(key, JSON.stringify(v));
+  } catch {
+    /* storage unavailable */
+  }
+}
+
+function readSettings(): Omit<Settings, 'watchClipboard' | 'speedLimit'> {
+  const defaults = {
+    downloadDir: 'C:\\Users\\you\\Downloads', maxParallel: MAX_PARALLEL, connections: 8, browserStart: 'now' as const,
+    schedule: null, closeToTray: true, autostart: false, notifyFinished: true, trayHintShown: false, firstDownloadSeen: false,
+  };
+  try {
+    const v = globalThis.sessionStorage?.getItem(SETTINGS_KEY);
+    if (v) return { ...defaults, ...(JSON.parse(v) as object) };
+  } catch {
+    /* storage unavailable */
+  }
+  return defaults;
 }
 
 function readLimit(): SpeedLimit {
@@ -169,7 +195,7 @@ export function createMockBackend(
     // Start queued rows up to the parallel limit.
     let running = downloads.filter((d) => d.state === 'running').length;
     for (const d of downloads) {
-      if (running >= MAX_PARALLEL) break;
+      if (running >= own.maxParallel) break;
       if (d.state !== 'queued') continue;
       if (d.url.includes('404')) setState(d, 'offline');
       else if (d.url.includes('expired')) setState(d, 'link_expired');
@@ -281,6 +307,12 @@ export function createMockBackend(
   // Like Tauri: a rejected command rejects with the message string.
   const call = async <T>(f: () => T): Promise<T> => f();
 
+  // Settings other than the clipboard switch and speed limit, which live with their old mock state.
+  type Own = Omit<Settings, 'watchClipboard' | 'speedLimit'>;
+  let own: Own = readSettings();
+  const fullSettings = (): Settings => ({ ...own, watchClipboard: collector.snapshot().watchClipboard, speedLimit: { ...limit } });
+  const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, Math.round(n)));
+
   if (opts.demo) seedDemo();
   setInterval(tick, opts.tickMs);
 
@@ -289,6 +321,38 @@ export function createMockBackend(
 
   return {
     calls,
+    async settings() {
+      rec('settings');
+      return fullSettings();
+    },
+    async setSettings(p: SettingsPatch) {
+      rec('setSettings');
+      // A folder containing "Refused" stands in for one Haul can't write to.
+      if (p.downloadDir !== undefined && p.downloadDir.includes('Refused')) {
+        throw "downloadDir: Haul can't save files there (Access is denied.)";
+      }
+      if (p.schedule && p.schedule.weekdays.length === 0) throw 'schedule: choose at least one day';
+      const next: SettingsPatch = { ...p };
+      if (next.maxParallel !== undefined) next.maxParallel = clamp(next.maxParallel, 1, 20);
+      if (next.connections !== undefined) next.connections = clamp(next.connections, 1, 16);
+      if (next.speedLimit) {
+        limit = { ...next.speedLimit, bps: next.speedLimit.enabled ? Math.max(1024, next.speedLimit.bps) : next.speedLimit.bps };
+        save(LIMIT_KEY, limit);
+      }
+      if (next.watchClipboard !== undefined) collector.setWatch(next.watchClipboard);
+      const { watchClipboard: _w, speedLimit: _l, ...rest } = next;
+      own = { ...own, ...rest };
+      save(SETTINGS_KEY, own);
+      return fullSettings();
+    },
+    async pickFolder() {
+      rec('pickFolder');
+      const w = globalThis as unknown as { __haulMockNextFolder?: string };
+      return w.__haulMockNextFolder ?? 'C:\\Users\\you\\Downloads\\Picked';
+    },
+    async openPath() {
+      rec('openPath');
+    },
     async snapshot(): Promise<Snapshot> {
       rec('snapshot');
       const used = new Set(downloads.map((d) => d.packageId));
@@ -319,7 +383,7 @@ export function createMockBackend(
           }
         }
         for (const l of g.links) {
-          const d = add(l.url, packageId, { name: l.name, size: l.size ?? sizeFor(l.url) });
+          const d = add(l.url, packageId, { name: l.name, size: l.size ?? sizeFor(l.url), targetDir: own.downloadDir, connections: own.connections });
           pending.states.push({ id: d.id, state: 'queued', error: null });
           started++;
         }
@@ -337,10 +401,6 @@ export function createMockBackend(
     async setCollectorFilters(f) {
       rec('setCollectorFilters');
       collector.setFilters(f);
-    },
-    async setWatchClipboard(on) {
-      rec('setWatchClipboard');
-      collector.setWatch(on);
     },
     async pause(ids) {
       rec('pause');
@@ -382,15 +442,6 @@ export function createMockBackend(
       }
       for (const d of rest) d.position = ++pos;
       sort();
-    },
-    async setSpeedLimit(l) {
-      rec('setSpeedLimit');
-      limit = { ...l };
-      try {
-        globalThis.sessionStorage?.setItem(LIMIT_KEY, JSON.stringify(limit));
-      } catch {
-        /* storage unavailable */
-      }
     },
     async openFolder() {
       rec('openFolder');

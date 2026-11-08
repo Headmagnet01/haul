@@ -1,11 +1,18 @@
 import type {
   Category, CollectorFilters, CollectorSnapshot, Destination, IntakeResult, PostProcSettings, PriorityName, Rule,
-  PairedClient, RulesConfig, Run, Snapshot, Source, SpeedLimit, StartResult, Update,
+  PairedClient, RulesConfig, Run, Settings, SettingsPatch, Snapshot, Source, StartResult, Update,
 } from './types';
 import { createMockBackend } from './backend-mock';
 import { tauriBackend } from './backend-tauri';
 
 export interface Backend {
+  settings(): Promise<Settings>;
+  /** Saves and applies the fields in `p`; returns the whole record. Rejects with `"<field>: <reason>"`, saving nothing. */
+  setSettings(p: SettingsPatch): Promise<Settings>;
+  /** The Windows folder picker; null when cancelled. */
+  pickFolder(): Promise<string | null>;
+  /** Opens a folder in Explorer. */
+  openPath(path: string): Promise<void>;
   snapshot(): Promise<Snapshot>;
   /** Sends the links in `text` to the Collector. */
   addLinks(text: string, source: Source): Promise<IntakeResult>;
@@ -14,14 +21,12 @@ export interface Backend {
   collectorRemove(ids: number[]): Promise<void>;
   collectorRecheck(ids: number[]): Promise<void>;
   setCollectorFilters(f: CollectorFilters): Promise<void>;
-  setWatchClipboard(on: boolean): Promise<void>;
   pause(ids: number[]): Promise<void>;
   resume(ids: number[]): Promise<void>;
   remove(ids: number[]): Promise<void>;
   pauseAll(): Promise<void>;
   setPriority(id: number, p: PriorityName): Promise<void>;
   reorder(ids: number[]): Promise<void>;
-  setSpeedLimit(l: SpeedLimit): Promise<void>;
   openFolder(id: number): Promise<void>;
   postprocRuns(): Promise<Run[]>;
   /** Runs a finished package (or lone file) now. Returns the run id. */

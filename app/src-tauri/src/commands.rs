@@ -127,6 +127,15 @@ pub async fn open_folder(app: AppHandle, core: State<'_, AppCore>, id: i64) -> R
     .map_err(|e| e.to_string())
 }
 
+/// Opens a folder in Explorer. Only folders: this never runs a file.
+#[tauri::command]
+pub async fn open_path(app: AppHandle, path: String) -> R<()> {
+    if !std::path::Path::new(&path).is_dir() {
+        return Err("That folder doesn't exist.".into());
+    }
+    app.opener().open_path(path, None::<&str>).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub async fn postproc_runs(core: State<'_, AppCore>) -> R<Vec<Run>> {
     blocking(&core, |c| c.postproc_runs().map_err(|e| e.to_string())).await

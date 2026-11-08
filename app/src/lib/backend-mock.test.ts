@@ -185,3 +185,37 @@ test('ended_request_is_closed', async () => {
   await b.pairAnswer(n, true);
   expect(await b.pairedClients()).toEqual([]); // a late Allow pairs nothing
 });
+
+test('set_settings_clamps', async () => {
+  const b = createMockBackend({ tickMs: 250, demo: false });
+  const s = await b.setSettings({ maxParallel: 0, connections: 40, speedLimit: { enabled: true, bps: 10 } });
+  expect([s.maxParallel, s.connections, s.speedLimit.bps]).toEqual([1, 16, 1024]);
+  const t = await b.setSettings({ maxParallel: 99, connections: 0 });
+  expect([t.maxParallel, t.connections]).toEqual([20, 1]);
+});
+
+test('set_settings_refused_saves_nothing', async () => {
+  const b = createMockBackend({ tickMs: 250, demo: false });
+  await expect(b.setSettings({ downloadDir: 'Z:\\Refused', maxParallel: 7 })).rejects.toMatch(/^downloadDir: /);
+  expect((await b.settings()).maxParallel).toBe(3);
+});
+
+test('folder_change_used_by_next_download', async () => {
+  const b = createMockBackend({ tickMs: 250, demo: false, checkMs: CHECK_MS });
+  await queue(b, 'https://x.org/a.bin');
+  await b.setSettings({ downloadDir: 'D:\\Other', connections: 2 });
+  await queue(b, 'https://x.org/b.bin');
+  const ds = (await b.snapshot()).downloads;
+  const a = ds.find((d) => d.name === 'a.bin')!;
+  const n = ds.find((d) => d.name === 'b.bin')!;
+  expect(a.targetDir).toBe('C:\\Users\\you\\Downloads');
+  expect([n.targetDir, n.connections]).toEqual(['D:\\Other', 2]);
+});
+
+test('clipboard_and_limit_are_settings', async () => {
+  const b = createMockBackend({ tickMs: 250, demo: false });
+  await b.setSettings({ watchClipboard: true, speedLimit: { enabled: true, bps: 5000 } });
+  expect((await b.collectorSnapshot()).watchClipboard).toBe(true);
+  expect((await b.snapshot()).speedLimit).toEqual({ enabled: true, bps: 5000 });
+  expect((await b.settings()).watchClipboard).toBe(true);
+});

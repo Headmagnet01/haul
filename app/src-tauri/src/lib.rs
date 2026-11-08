@@ -52,6 +52,7 @@ pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             commands::snapshot,
             commands::add_links,
@@ -69,6 +70,7 @@ pub fn run() {
             commands::set_collector_filters,
             commands::settings,
             commands::set_settings,
+            commands::open_path,
             commands::postproc_runs,
             commands::postproc_process,
             commands::postproc_retry,

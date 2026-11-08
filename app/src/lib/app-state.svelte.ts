@@ -201,7 +201,7 @@ export function createAppState(backend: Backend) {
     ranges,
     async setSpeedLimit(l: SpeedLimit) {
       snapshot.speedLimit = { ...l };
-      await backend.setSpeedLimit(l);
+      await backend.setSettings({ speedLimit: l });
     },
     get list() { return list; },
     get totals() { return totals; },

@@ -118,7 +118,7 @@ test('clipboard_toggle', async ({ page }) => {
   await tog.click();
   await expect(tog).toHaveAttribute('aria-pressed', 'true');
   const calls = await page.evaluate(() => (window as unknown as { __haulMockCalls: string[] }).__haulMockCalls);
-  expect(calls).toContain('setWatchClipboard');
+  expect(calls).toContain('setSettings');
 });
 
 test('rail_badge_counts_links', async ({ page }) => {

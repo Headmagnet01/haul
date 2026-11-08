@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
+import { open } from '@tauri-apps/plugin-dialog';
 import type { Backend } from './backend';
 import type { Update } from './types';
 
@@ -18,6 +19,13 @@ function subscribe<T>(event: string, cb: (payload: T) => void): () => void {
 
 /** Command names match app/src-tauri/src/commands.rs; argument names are camelCase. */
 export const tauriBackend: Backend = {
+  settings: () => invoke('settings'),
+  setSettings: (patch) => invoke('set_settings', { patch }),
+  pickFolder: async () => {
+    const r = await open({ directory: true, multiple: false });
+    return typeof r === 'string' ? r : null;
+  },
+  openPath: (path) => invoke('open_path', { path }),
   snapshot: () => invoke('snapshot'),
   addLinks: (text, source) => invoke('add_links', { text, source }),
   collectorSnapshot: () => invoke('collector_snapshot'),
@@ -25,14 +33,12 @@ export const tauriBackend: Backend = {
   collectorRemove: (ids) => invoke('collector_remove', { ids }),
   collectorRecheck: (ids) => invoke('collector_recheck', { ids }),
   setCollectorFilters: (filters) => invoke('set_collector_filters', { filters }),
-  setWatchClipboard: (on) => invoke('set_watch_clipboard', { on }),
   pause: (ids) => invoke('pause', { ids }),
   resume: (ids) => invoke('resume', { ids }),
   remove: (ids) => invoke('remove', { ids }),
   pauseAll: () => invoke('pause_all'),
   setPriority: (id, priority) => invoke('set_priority', { id, priority }),
   reorder: (ids) => invoke('reorder', { ids }),
-  setSpeedLimit: (l) => invoke('set_speed_limit', { enabled: l.enabled, bps: l.bps }),
   openFolder: (id) => invoke('open_folder', { id }),
   postprocRuns: () => invoke('postproc_runs'),
   postprocProcess: (t) => invoke('postproc_process', { packageId: t.packageId ?? null, downloadId: t.downloadId ?? null }),

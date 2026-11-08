@@ -203,3 +203,32 @@ export interface PairedClient {
   createdAt: string;
   lastSeen: string | null;
 }
+
+export type BrowserStart = 'now' | 'collector';
+export type Weekday = 'Mon' | 'Tue' | 'Wed' | 'Thu' | 'Fri' | 'Sat' | 'Sun';
+export const WEEKDAYS: Weekday[] = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+/** Times are `HH:MM:SS`. `start === stop` means all day on the chosen days. */
+export interface Schedule {
+  start: string;
+  stop: string;
+  weekdays: Weekday[];
+}
+
+export interface Settings {
+  downloadDir: string;
+  maxParallel: number;
+  connections: number;
+  speedLimit: SpeedLimit;
+  browserStart: BrowserStart;
+  watchClipboard: boolean;
+  schedule: Schedule | null;
+  closeToTray: boolean;
+  autostart: boolean;
+  notifyFinished: boolean;
+  trayHintShown: boolean;
+  firstDownloadSeen: boolean;
+}
+
+/** Only the fields that change; `schedule: null` turns the schedule off. */
+export type SettingsPatch = Partial<Settings>;

@@ -192,7 +192,7 @@ export function createCollectorState(
         const before = snapshot.watchClipboard;
         snapshot.watchClipboard = on;
         return () => (snapshot.watchClipboard = before);
-      }, () => backend.setWatchClipboard(on));
+      }, async () => void (await backend.setSettings({ watchClipboard: on })));
     },
   };
 }
