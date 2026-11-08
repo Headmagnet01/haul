@@ -66,6 +66,11 @@ pub fn starts_hidden(args: &[String]) -> bool {
     args.iter().any(|a| a == "--hidden")
 }
 
+/// A second launch shows the running window, except one from sign-in (`--hidden`).
+pub fn should_show(args: &[String]) -> bool {
+    !starts_hidden(args)
+}
+
 /// The dark theme's signal orange, `#ff7b33`: it reads on both light and dark taskbars.
 const DOT: [u8; 4] = [0xff, 0x7b, 0x33, 0xff];
 
@@ -302,6 +307,12 @@ mod tests {
         let at = |x: u32, y: u32| &px[((y * w + x) * 4) as usize..((y * w + x) * 4 + 4) as usize];
         assert_eq!(at(26, 26), &[0xff, 0x7b, 0x33, 0xff]);
         assert_eq!(at(4, 4), &[0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn second_launch_args_hidden_keeps_window_hidden() {
+        assert!(!should_show(&["haul.exe".into(), "--hidden".into()]));
+        assert!(should_show(&["haul.exe".into()]));
     }
 
     #[test]

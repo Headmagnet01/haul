@@ -32,9 +32,9 @@ pub async fn settings(core: State<'_, AppCore>) -> R<Settings> {
 pub async fn set_settings(app: AppHandle, core: State<'_, AppCore>, patch: SettingsPatch) -> R<Settings> {
     // Autostart first: if Windows refuses, nothing is saved and the switch stays as it was.
     if let Some(on) = patch.autostart {
-        use tauri_plugin_autostart::ManagerExt;
-        let a = app.autolaunch();
-        if on { a.enable() } else { a.disable() }.map_err(|e| format!("autostart: {e}"))?;
+        let a = crate::autostart::Autostart::real();
+        let r = if on { std::env::current_exe().and_then(|exe| a.enable(&exe)) } else { a.disable() };
+        r.map_err(|e| format!("autostart: {e}"))?;
     }
     let limit = patch.speed_limit;
     let s = blocking(&core, move |c| c.set_settings(patch).map_err(|e| e.to_string())).await?;
