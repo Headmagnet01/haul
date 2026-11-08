@@ -28,11 +28,13 @@ fn row(r: &Row) -> rusqlite::Result<PairedClient> {
 }
 
 impl Store {
-    /// Pairs `origin`; pairing the same extension again replaces its row, so its old key stops working.
+    /// Pairs `browser` at `origin`; pairing the same browser again replaces its row, so its old key stops working.
     pub fn add_paired_client(&self, browser: &str, origin: &str, token_hash: &str) -> Result<i64, EngineError> {
         let mut c = self.lock();
         let tx = c.transaction()?;
-        tx.execute("DELETE FROM paired_clients WHERE origin = ?1", [origin])?;
+        // Same origin and name: the same browser pairing again. Edge and Chrome can share one
+        // origin (the same unpacked folder), so the name tells them apart.
+        tx.execute("DELETE FROM paired_clients WHERE origin = ?1 AND browser = ?2", params![origin, browser])?;
         tx.execute(
             "INSERT INTO paired_clients (browser, origin, token_hash) VALUES (?1, ?2, ?3)",
             params![browser, origin, token_hash],
@@ -98,6 +100,17 @@ mod tests {
         assert!(s.paired_client_by_hash("h2").unwrap().is_some());
         assert!(s.paired_client_by_hash("h9").unwrap().is_some());
         assert_eq!(s.list_paired_clients().unwrap().len(), 2);
+    }
+
+    /// Edge and Chrome load the same unpacked folder, so they share one extension id (origin):
+    /// pairing one must not revoke the other.
+    #[test]
+    fn two_browsers_sharing_an_origin_keep_their_keys() {
+        let s = Store::open_in_memory().unwrap();
+        s.add_paired_client("Microsoft Edge", "chrome-extension://abc", "edge").unwrap();
+        s.add_paired_client("Google Chrome", "chrome-extension://abc", "chrome").unwrap();
+        assert!(s.paired_client_by_hash("edge").unwrap().is_some(), "pairing Chrome revoked Edge");
+        assert!(s.paired_client_by_hash("chrome").unwrap().is_some());
     }
 
     #[test]
