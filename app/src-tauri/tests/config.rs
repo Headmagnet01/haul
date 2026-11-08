@@ -178,3 +178,11 @@ fn extension_pages_opened_by_code_are_bundled() {
 fn before_build_builds_extension() {
     assert_eq!(base()["build"]["beforeBuildCommand"], "npm --prefix ../extension run build && npm run build");
 }
+
+/// Haul opens folders and pages from Rust; the window needs no opener permission or JS package.
+#[test]
+fn window_has_no_opener() {
+    assert!(!permissions(&capability("default")).iter().any(|p| p.starts_with("opener:")));
+    let pkg = json(include_str!("../../package.json"));
+    assert!(pkg["dependencies"].get("@tauri-apps/plugin-opener").is_none());
+}
