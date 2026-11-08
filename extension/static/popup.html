@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Haul</title>
+    <link rel="stylesheet" href="style.css" />
+    <style>
+      body { width: 300px; padding: 14px 16px; }
+      header { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+      header img { width: 20px; height: 20px; }
+      #state { font-weight: 500; }
+      #last { margin-top: 10px; }
+      .actions { display: flex; gap: 8px; margin-top: 12px; }
+    </style>
+  </head>
+  <body>
+    <header><img src="icons/haul-32.png" alt="" /><h1>Haul</h1></header>
+    <div class="row"><span id="dot" class="dot"></span><span id="state">Checking…</span></div>
+    <p id="detail" class="muted small"></p>
+    <p id="last" class="muted small" hidden></p>
+    <div class="actions">
+      <button id="pair" class="btn primary" type="button" hidden>Pair with Haul</button>
+      <button id="options" class="btn" type="button">Options</button>
+    </div>
+    <script src="popup.js"></script>
+  </body>
+</html>

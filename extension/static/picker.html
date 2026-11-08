@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Send links to Haul</title>
+    <link rel="stylesheet" href="style.css" />
+    <style>
+      body { max-width: 900px; padding: 20px 24px 80px; }
+      #page { margin-top: 2px; }
+      .chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 14px 0 10px; }
+      .chip { padding: 3px 10px; border-radius: 12px; border: 1px solid var(--line); background: var(--raised); cursor: pointer; font-size: 12px; }
+      .chip[aria-pressed='true'] { background: var(--ink); color: var(--surface); border-color: var(--ink); }
+      ul { list-style: none; border-top: 1px solid var(--line); }
+      li { border-bottom: 1px solid var(--line-2); }
+      li label { display: flex; align-items: center; gap: 10px; padding: 6px 4px; cursor: pointer; }
+      .url { font-family: var(--mono); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1; }
+      .kind { font-size: 11px; color: var(--ink-3); width: 76px; flex: none; }
+      footer {
+        position: fixed; left: 0; right: 0; bottom: 0; padding: 12px 24px; background: var(--raised);
+        border-top: 1px solid var(--line); display: flex; align-items: center; gap: 12px;
+      }
+      #empty { margin-top: 16px; }
+    </style>
+  </head>
+  <body>
+    <h1>Send links to Haul</h1>
+    <p id="page" class="muted small"></p>
+    <div class="chips" id="chips" role="group" aria-label="Show file types"></div>
+    <label class="row small"><input id="all" type="checkbox" /> Select all shown</label>
+    <ul id="list" aria-label="Links on the page"></ul>
+    <p id="empty" class="muted" hidden>No links of the chosen types on this page.</p>
+    <footer>
+      <button id="send" class="btn primary" type="button" disabled>Send to Haul</button>
+      <span id="note" class="muted small" role="status"></span>
+    </footer>
+    <script src="picker-page.js"></script>
+  </body>
+</html>

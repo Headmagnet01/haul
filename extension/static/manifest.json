@@ -4,10 +4,48 @@
   "version": "0.1.0",
   "description": "Sends your downloads and links to Haul, the download manager.",
   "minimum_chrome_version": "116",
-  "permissions": ["downloads", "contextMenus", "cookies", "storage", "activeTab", "scripting", "notifications"],
-  "host_permissions": ["<all_urls>", "http://127.0.0.1/*"],
-  "background": { "service_worker": "background.js", "type": "module" },
-  "content_scripts": [{ "matches": ["<all_urls>"], "js": ["content.js"], "run_at": "document_start", "all_frames": true }],
-  "action": { "default_title": "Haul", "default_popup": "popup.html" },
-  "options_page": "options.html"
+  "permissions": [
+    "downloads",
+    "contextMenus",
+    "cookies",
+    "storage",
+    "activeTab",
+    "scripting",
+    "notifications"
+  ],
+  "host_permissions": [
+    "<all_urls>",
+    "http://127.0.0.1/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_start",
+      "all_frames": true
+    }
+  ],
+  "action": {
+    "default_title": "Haul",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "32": "icons/haul-32.png",
+      "64": "icons/haul-64.png",
+      "128": "icons/haul-128.png"
+    }
+  },
+  "options_page": "options.html",
+  "icons": {
+    "32": "icons/haul-32.png",
+    "64": "icons/haul-64.png",
+    "128": "icons/haul-128.png"
+  }
 }
