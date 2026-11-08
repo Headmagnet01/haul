@@ -14,6 +14,8 @@
   }
 }
 * { box-sizing: border-box; margin: 0; padding: 0; }
+/* `.btn` sets display, which would otherwise beat the hidden attribute. */
+[hidden] { display: none !important; }
 body { background: var(--surface); color: var(--ink); font: 13px/1.45 var(--sans); }
 button, input { font: inherit; color: inherit; }
 :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 4px; }
