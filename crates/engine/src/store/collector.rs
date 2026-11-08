@@ -57,6 +57,31 @@ impl Store {
         Ok(ids)
     }
 
+    /// Stores a link's request headers sealed for the current Windows user (`None` clears them).
+    pub fn set_link_headers(&self, id: i64, headers_json: Option<&str>) -> Result<(), EngineError> {
+        let blob = super::seal_headers(headers_json)?;
+        self.lock().execute("UPDATE collector_links SET headers_blob = ?2 WHERE id = ?1", params![id, blob])?;
+        Ok(())
+    }
+
+    /// A link's request headers; a missing link, no headers or a blob that can't be unsealed is `None`.
+    pub fn link_headers(&self, id: i64) -> Result<Option<String>, EngineError> {
+        let blob: Option<Vec<u8>> = self
+            .lock()
+            .query_row("SELECT headers_blob FROM collector_links WHERE id = ?1", [id], |r| r.get(0))
+            .optional()?
+            .flatten();
+        Ok(super::open_headers(blob))
+    }
+
+    /// The id of a waiting link with exactly this URL.
+    pub fn find_link_by_url(&self, url: &str) -> Result<Option<i64>, EngineError> {
+        Ok(self
+            .lock()
+            .query_row("SELECT id FROM collector_links WHERE url = ?1 ORDER BY id LIMIT 1", [url], |r| r.get(0))
+            .optional()?)
+    }
+
     pub fn list_batches(&self) -> Result<Vec<Batch>, EngineError> {
         let c = self.lock();
         let mut st = c.prepare("SELECT id, source, label, created_at FROM collector_batches ORDER BY id")?;

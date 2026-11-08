@@ -687,7 +687,7 @@ mod tests {
     }
 
     fn fake_online() -> haul_engine::ProbeFn {
-        std::sync::Arc::new(|url: String| {
+        std::sync::Arc::new(|url: String, _headers: Option<String>| {
             Box::pin(async move {
                 Ok(haul_engine::ProbeInfo {
                     final_url: url.clone(),

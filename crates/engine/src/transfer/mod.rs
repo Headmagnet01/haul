@@ -131,7 +131,7 @@ pub async fn run_transfer(job: TransferJob, ctx: &TransferCtx) -> TransferOutcom
     out
 }
 
-fn parse_headers(json: Option<&str>) -> HeaderMap {
+pub(crate) fn parse_headers(json: Option<&str>) -> HeaderMap {
     let mut h = HeaderMap::new();
     let Some(map) = json.and_then(|j| serde_json::from_str::<HashMap<String, String>>(j).ok()) else {
         return h;

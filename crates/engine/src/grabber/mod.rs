@@ -30,14 +30,16 @@ const PROBE_TIMEOUT: Duration = Duration::from_secs(20);
 const ARCHIVE_KEY: &str = "a:";
 
 /// Checks one link. Injected so tests run without a network.
-pub type ProbeFn = Arc<dyn Fn(String) -> BoxFuture<'static, Result<ProbeInfo, EngineError>> + Send + Sync>;
+/// The second argument is the link's request headers as JSON (a browser capture's cookies), if any.
+pub type ProbeFn =
+    Arc<dyn Fn(String, Option<String>) -> BoxFuture<'static, Result<ProbeInfo, EngineError>> + Send + Sync>;
 
-/// The real prober: one `probe` with no extra headers, given up after 20 seconds.
+/// The real prober: one `probe` with the link's headers, given up after 20 seconds.
 pub fn http_prober(client: reqwest::Client) -> ProbeFn {
-    Arc::new(move |url: String| {
+    Arc::new(move |url: String, headers_json: Option<String>| {
         let client = client.clone();
         Box::pin(async move {
-            let headers = reqwest::header::HeaderMap::new();
+            let headers = crate::transfer::parse_headers(headers_json.as_deref());
             tokio::time::timeout(PROBE_TIMEOUT, probe(&client, &url, &headers))
                 .await
                 .unwrap_or_else(|_| Err(EngineError::Network("timed out".into())))
@@ -176,7 +178,11 @@ impl Grabber {
             (self.store.clone(), self.events.clone(), self.probe.clone(), self.permits.clone());
         self.rt.spawn(async move {
             let Ok(_slot) = permits.acquire_owned().await else { return };
-            let (status, info, message) = outcome(probe(url).await);
+            let headers = store.link_headers(id).unwrap_or_else(|e| {
+                tracing::warn!(id, error = %e, "collector link headers unreadable");
+                None
+            });
+            let (status, info, message) = outcome(probe(url, headers).await);
             if let Err(e) = store.set_link_probe(id, status, info.as_ref(), message.as_deref()) {
                 tracing::warn!(id, error = %e, "could not save link check");
             }
@@ -187,6 +193,25 @@ impl Grabber {
     /// Adds links as one batch and starts checking them. Links already waiting are skipped.
     pub fn intake(&self, links: Vec<String>, source: &str) -> Result<IntakeResult, EngineError> {
         self.intake_labelled(links, source, None)
+    }
+
+    /// A browser capture waiting in the Collector: one link with its request headers, kept sealed. The
+    /// same URL already waiting gets the new headers and is checked again instead of being added.
+    pub fn intake_capture(&self, url: String, headers_json: Option<String>) -> Result<IntakeResult, EngineError> {
+        let _turn = self.take_turn();
+        if let Some(id) = self.store.find_link_by_url(&url)? {
+            self.store.set_link_headers(id, headers_json.as_deref())?;
+            self.store.set_link_probe(id, LinkStatus::Checking, None, None)?;
+            self.spawn_probe(id, url);
+            self.changed();
+            return Ok(IntakeResult { added: 0, skipped: 1 });
+        }
+        let batch = self.store.create_batch("browser", &pasted_label())?;
+        let id = self.store.insert_link(batch, &url)?;
+        self.store.set_link_headers(id, headers_json.as_deref())?;
+        self.spawn_probe(id, url);
+        self.changed();
+        Ok(IntakeResult { added: 1, skipped: 0 })
     }
 
     /// Like `intake`, with the batch named `label` (a page title) instead of the paste time.
@@ -321,7 +346,7 @@ impl Grabber {
             let id = queue.add(NewDownload {
                 package_id,
                 url: l.url.clone(),
-                headers_json: None,
+                headers_json: self.store.link_headers(l.id)?,
                 target_dir: d.target_dir.clone(),
                 file_name: None,
                 priority: Priority::Normal,

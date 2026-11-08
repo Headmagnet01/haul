@@ -14,7 +14,7 @@ pub use clients::PairedClient;
 pub use collector::{Batch, CollectorLink};
 pub use postproc::{RuleRowIn, RuleRowOut, RunRow};
 
-const SCHEMA_VERSION: i64 = 6;
+const SCHEMA_VERSION: i64 = 7;
 
 #[derive(Clone)]
 pub struct Store {
@@ -156,6 +156,7 @@ impl Store {
             include_str!("migration_4.sql"),
             include_str!("migration_5.sql"),
             include_str!("migration_6.sql"),
+            include_str!("migration_7.sql"),
         ];
         for (i, sql) in migrations.iter().enumerate().skip(version.max(0) as usize) {
             let to = i + 1;
@@ -588,8 +589,8 @@ mod tests {
     }
 
     #[test]
-    fn schema_version_is_6() {
-        assert_eq!(Store::open_in_memory().unwrap().schema_version().unwrap(), 6);
+    fn schema_version_is_latest() {
+        assert_eq!(Store::open_in_memory().unwrap().schema_version().unwrap(), SCHEMA_VERSION);
     }
 
     #[test]
@@ -636,10 +637,64 @@ mod tests {
             .unwrap();
         }
         let s = Store::open(&path).unwrap();
-        assert_eq!(s.schema_version().unwrap(), 6);
+        assert_eq!(s.schema_version().unwrap(), SCHEMA_VERSION);
         let d = &s.list_downloads().unwrap()[0];
         assert_eq!(d.state, DownloadState::Completed);
         assert_eq!(d.finished_at, None);
+    }
+
+    #[test]
+    fn migration_7_keeps_links() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("haul.db");
+        {
+            let c = Connection::open(&path).unwrap();
+            for (i, sql) in [
+                include_str!("schema.sql"),
+                include_str!("migration_2.sql"),
+                include_str!("migration_3.sql"),
+                include_str!("migration_4.sql"),
+                include_str!("migration_5.sql"),
+                include_str!("migration_6.sql"),
+            ]
+            .iter()
+            .enumerate()
+            {
+                c.execute_batch(&format!("BEGIN; {sql} PRAGMA user_version = {}; COMMIT;", i + 1)).unwrap();
+            }
+            c.execute("INSERT INTO collector_batches (source, label) VALUES ('paste', 'p')", []).unwrap();
+            c.execute("INSERT INTO collector_links (batch_id, url) VALUES (1, 'https://a.org/x')", []).unwrap();
+        }
+        let s = Store::open(&path).unwrap();
+        assert_eq!(s.schema_version().unwrap(), 7);
+        let l = &s.list_links().unwrap()[0];
+        assert_eq!(l.url, "https://a.org/x");
+        assert_eq!(s.link_headers(l.id).unwrap(), None);
+    }
+
+    #[test]
+    fn link_headers_are_stored_encrypted() {
+        let s = Store::open_in_memory().unwrap();
+        let b = s.create_batch("browser", "b").unwrap();
+        let id = s.insert_link(b, "https://a.org/f.zip").unwrap();
+        s.set_link_headers(id, Some(r#"{"Cookie":"sid=1"}"#)).unwrap();
+        let raw: Vec<u8> =
+            s.lock().query_row("SELECT headers_blob FROM collector_links WHERE id = ?1", [id], |r| r.get(0)).unwrap();
+        assert!(!raw.windows(5).any(|w| w == b"sid=1"));
+        assert_eq!(s.link_headers(id).unwrap().as_deref(), Some(r#"{"Cookie":"sid=1"}"#));
+        assert_eq!(s.find_link_by_url("https://a.org/f.zip").unwrap(), Some(id));
+        assert_eq!(s.find_link_by_url("https://a.org/other").unwrap(), None);
+        s.set_link_headers(id, None).unwrap();
+        assert_eq!(s.link_headers(id).unwrap(), None);
+    }
+
+    #[test]
+    fn unreadable_link_headers_are_none() {
+        let s = Store::open_in_memory().unwrap();
+        let b = s.create_batch("browser", "b").unwrap();
+        let id = s.insert_link(b, "https://a.org/f.zip").unwrap();
+        s.lock().execute("UPDATE collector_links SET headers_blob = x'00010203' WHERE id = ?1", [id]).unwrap();
+        assert_eq!(s.link_headers(id).unwrap(), None);
     }
 
     #[test]

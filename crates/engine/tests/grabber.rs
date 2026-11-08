@@ -38,7 +38,7 @@ fn fake(map: fn(&str) -> Result<ProbeInfo, EngineError>, delay_ms: u64) -> (Prob
     let now = Arc::new(AtomicU32::new(0));
     let max = Arc::new(AtomicU32::new(0));
     let m = max.clone();
-    let f: ProbeFn = Arc::new(move |url: String| {
+    let f: ProbeFn = Arc::new(move |url: String, _headers: Option<String>| {
         let (now, max) = (now.clone(), m.clone());
         Box::pin(async move {
             let n = now.fetch_add(1, SeqCst) + 1;
@@ -271,7 +271,7 @@ async fn start_skips_offline() {
 async fn probe_finishing_after_remove_is_ignored() {
     let gate = Arc::new(tokio::sync::Notify::new());
     let g2 = gate.clone();
-    let p: ProbeFn = Arc::new(move |url: String| {
+    let p: ProbeFn = Arc::new(move |url: String, _headers: Option<String>| {
         let gate = g2.clone();
         Box::pin(async move {
             gate.notified().await;
@@ -304,7 +304,7 @@ async fn checking_links_reprobed_on_start() {
 async fn recheck_reprobes_error_links() {
     let calls = Arc::new(AtomicU32::new(0));
     let c = calls.clone();
-    let p: ProbeFn = Arc::new(move |url: String| {
+    let p: ProbeFn = Arc::new(move |url: String, _headers: Option<String>| {
         let n = c.fetch_add(1, SeqCst);
         Box::pin(async move { if n == 0 { Err(EngineError::Network("timed out".into())) } else { Ok(info(&url)) } })
     });
@@ -421,4 +421,105 @@ async fn late_part_joins_started_package() {
     assert_eq!(ds.len(), 3);
     assert!(ds.iter().all(|d| d.package_id.is_some() && d.package_id == ds[0].package_id), "{ds:?}");
     q.shutdown().await;
+}
+
+/// A prober that records each call's headers and answers Online.
+/// Each probe call: the URL and the headers it was given.
+type Calls = Arc<std::sync::Mutex<Vec<(String, Option<String>)>>>;
+
+fn recording() -> (ProbeFn, Calls) {
+    let calls = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let c = calls.clone();
+    let f: ProbeFn = Arc::new(move |url: String, headers: Option<String>| {
+        c.lock().unwrap().push((url.clone(), headers));
+        Box::pin(async move { Ok(info(&url)) })
+    });
+    (f, calls)
+}
+
+const COOKIE1: &str = r#"{"Cookie":"sid=1","Referer":"https://a.org/page"}"#;
+const COOKIE2: &str = r#"{"Cookie":"sid=2"}"#;
+
+#[tokio::test]
+async fn captured_link_probe_gets_its_cookie() {
+    let (p, calls) = recording();
+    let (g, _) = grabber(p);
+    let r = g.intake_capture("https://a.org/f.zip".into(), Some(COOKIE1.into())).unwrap();
+    assert_eq!((r.added, r.skipped), (1, 0));
+    wait_until(&g, "online", all_online).await;
+    let calls = calls.lock().unwrap();
+    assert!(calls[0].1.as_deref().is_some_and(|h| h.contains("sid=1")), "{calls:?}");
+}
+
+#[tokio::test]
+async fn pasted_link_probe_gets_no_headers() {
+    let (p, calls) = recording();
+    let (g, _) = grabber(p);
+    g.intake(links(&["https://a.org/f.zip"]), "paste").unwrap();
+    wait_until(&g, "online", all_online).await;
+    assert_eq!(calls.lock().unwrap()[0].1, None);
+}
+
+#[tokio::test]
+async fn captured_headers_never_reach_the_collector_state() {
+    let (p, _) = recording();
+    let (g, _) = grabber(p);
+    g.intake_capture("https://a.org/f.zip".into(), Some(COOKIE1.into())).unwrap();
+    let s = wait_until(&g, "online", all_online).await;
+    let json = serde_json::to_string(&s).unwrap();
+    assert!(!json.contains("sid"), "{json}");
+}
+
+#[tokio::test]
+async fn start_passes_capture_headers() {
+    let (p, _) = recording();
+    let (g, store) = grabber(p);
+    let q = idle_queue(&store);
+    g.intake_capture("https://a.org/f.zip".into(), Some(COOKIE1.into())).unwrap();
+    let s = wait_until(&g, "online", all_online).await;
+    assert_eq!(g.start(&[s.links[0].id], &q, &defaults()).unwrap(), 1);
+    let d = &store.list_downloads().unwrap()[0];
+    assert!(d.headers_json.as_deref().is_some_and(|h| h.contains("sid=1")), "{d:?}");
+}
+
+#[tokio::test]
+async fn second_capture_refreshes_headers() {
+    let (p, calls) = recording();
+    let (g, store) = grabber(p);
+    g.intake_capture("https://a.org/f.zip".into(), Some(COOKIE1.into())).unwrap();
+    let s = wait_until(&g, "online", all_online).await;
+    let id = s.links[0].id;
+    let r = g.intake_capture("https://a.org/f.zip".into(), Some(COOKIE2.into())).unwrap();
+    assert_eq!((r.added, r.skipped), (0, 1));
+    let s = wait_until(&g, "rechecked", |s| all_online(s) && calls.lock().unwrap().len() == 2).await;
+    assert_eq!(s.links.len(), 1);
+    assert!(store.link_headers(id).unwrap().is_some_and(|h| h.contains("sid=2")));
+    assert!(calls.lock().unwrap()[1].1.as_deref().is_some_and(|h| h.contains("sid=2")));
+}
+
+#[tokio::test]
+async fn remove_drops_headers() {
+    let (p, _) = recording();
+    let (g, store) = grabber(p);
+    g.intake_capture("https://a.org/f.zip".into(), Some(COOKIE1.into())).unwrap();
+    let s = wait_until(&g, "online", all_online).await;
+    let id = s.links[0].id;
+    g.remove(&[id]).unwrap();
+    assert_eq!(store.link_headers(id).unwrap(), None);
+    assert!(g.state().unwrap().links.is_empty());
+}
+
+#[tokio::test]
+async fn captured_login_link_is_online_with_cookie() {
+    let mut spec = Spec::new(2_000_000);
+    spec.require_header = Some(("cookie".into(), "sid=1".into()));
+    let srv = serve(spec).await;
+    let (g, _) = grabber(http_prober(http_client()));
+    let pasted = format!("{}?pasted", srv.url);
+    g.intake_capture(srv.url.clone(), Some(COOKIE1.into())).unwrap();
+    g.intake(vec![pasted.clone()], "paste").unwrap();
+    let s = wait_until(&g, "checked", |s| s.links.len() == 2 && all_online(s)).await;
+    let by = |u: &str| s.links.iter().find(|l| l.url == u).unwrap();
+    assert_eq!(by(&srv.url).status, LinkStatus::Online, "{s:?}");
+    assert_ne!(by(&pasted).status, LinkStatus::Online, "{s:?}");
 }
