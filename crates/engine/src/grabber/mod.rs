@@ -118,6 +118,8 @@ pub struct Grabber {
     turn: Arc<std::sync::Mutex<()>>,
     /// Lets intake run on threads outside the runtime, such as the clipboard watcher.
     rt: tokio::runtime::Handle,
+    /// The newest check of each link: an older check's answer (a recheck overtook it) is dropped.
+    probe_gen: Arc<std::sync::Mutex<HashMap<i64, u64>>>,
 }
 
 fn link_name(l: &CollectorLink) -> String {
@@ -155,6 +157,7 @@ impl Grabber {
             permits: Arc::new(Semaphore::new(PROBE_SLOTS)),
             turn: Arc::new(std::sync::Mutex::new(())),
             rt: tokio::runtime::Handle::current(),
+            probe_gen: Arc::default(),
         };
         match g.store.list_links() {
             Ok(links) => {
@@ -176,13 +179,28 @@ impl Grabber {
     fn spawn_probe(&self, id: i64, url: String) {
         let (store, events, probe, permits) =
             (self.store.clone(), self.events.clone(), self.probe.clone(), self.permits.clone());
+        let gens = self.probe_gen.clone();
+        let mine = {
+            let mut g = gens.lock().unwrap_or_else(|e| e.into_inner());
+            let n = g.entry(id).or_insert(0);
+            *n += 1;
+            *n
+        };
+        let current = move || gens.lock().unwrap_or_else(|e| e.into_inner()).get(&id) == Some(&mine);
         self.rt.spawn(async move {
             let Ok(_slot) = permits.acquire_owned().await else { return };
+            // Removed while waiting for a slot, or a newer check is on its way: nothing to do.
+            if !current() || !store.link_exists(id).unwrap_or(true) {
+                return;
+            }
             let headers = store.link_headers(id).unwrap_or_else(|e| {
                 tracing::warn!(id, error = %e, "collector link headers unreadable");
                 None
             });
             let (status, info, message) = outcome(probe(url, headers).await);
+            if !current() {
+                return;
+            }
             if let Err(e) = store.set_link_probe(id, status, info.as_ref(), message.as_deref()) {
                 tracing::warn!(id, error = %e, "could not save link check");
             }

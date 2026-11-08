@@ -523,3 +523,53 @@ async fn captured_login_link_is_online_with_cookie() {
     assert_eq!(by(&srv.url).status, LinkStatus::Online, "{s:?}");
     assert_ne!(by(&pasted).status, LinkStatus::Online, "{s:?}");
 }
+
+/// A link removed while its check waits for a slot is never checked.
+#[tokio::test]
+async fn removed_link_is_not_checked() {
+    let calls = Arc::new(AtomicU32::new(0));
+    let c = calls.clone();
+    let probe: ProbeFn = Arc::new(move |url: String, _h: Option<String>| {
+        c.fetch_add(1, SeqCst);
+        Box::pin(async move {
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            online(&url)
+        })
+    });
+    let (g, store) = grabber(probe);
+    let n = haul_engine::grabber::PROBE_SLOTS + 1;
+    let urls: Vec<String> = (0..n).map(|i| format!("https://a.org/f{i}.bin")).collect();
+    g.intake(urls.clone(), "paste").unwrap();
+    let last = store.list_links().unwrap().into_iter().find(|l| l.url == urls[n - 1]).unwrap().id;
+    g.remove(&[last]).unwrap();
+    tokio::time::sleep(Duration::from_millis(900)).await;
+    assert_eq!(calls.load(SeqCst) as usize, n - 1);
+}
+
+/// Recheck while the first check still runs: the newer answer is the one kept.
+#[tokio::test]
+async fn newer_recheck_wins() {
+    let calls = Arc::new(AtomicU32::new(0));
+    let c = calls.clone();
+    let probe: ProbeFn = Arc::new(move |url: String, _h: Option<String>| {
+        let first = c.fetch_add(1, SeqCst) == 0;
+        Box::pin(async move {
+            if first {
+                tokio::time::sleep(Duration::from_millis(300)).await;
+                Err(EngineError::Offline)
+            } else {
+                online(&url)
+            }
+        })
+    });
+    let (g, _store) = grabber(probe);
+    g.intake(links(&["https://a.org/x.bin"]), "paste").unwrap();
+    let id = g.state().unwrap().links[0].id;
+    // Recheck while the first (slow, Offline) check is under way.
+    while calls.load(SeqCst) == 0 {
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    g.recheck(&[id]).unwrap();
+    tokio::time::sleep(Duration::from_millis(600)).await;
+    assert_eq!(g.state().unwrap().links[0].status, LinkStatus::Online);
+}
