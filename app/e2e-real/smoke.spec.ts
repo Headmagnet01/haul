@@ -221,7 +221,7 @@ test('second_launch_shows_first', async () => {
   execFileSync(exe, [], { timeout: 5_000, stdio: 'ignore' });
   expect(Date.now() - t).toBeLessThan(5_000);
   await expect.poll(() => isVisible(page), { timeout: 5_000 }).toBe(true);
-  const port = readFileSync(join(process.env.APPDATA ?? '', 'dev.haul.desktop', 'api-port'), 'utf8').trim();
+  const port = readFileSync(join(process.env.APPDATA ?? '', 'dev.haul.desktop.dev', 'api-port'), 'utf8').trim();
   const listening = execFileSync('netstat', ['-ano', '-p', 'TCP'], { encoding: 'utf8' })
     .split('\n')
     .filter((l) => l.includes(`127.0.0.1:${port} `) && l.includes('LISTENING'));

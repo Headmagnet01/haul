@@ -3,7 +3,7 @@
   "productName": "Haul",
   "mainBinaryName": "haul",
   "version": "0.1.0",
-  "identifier": "dev.haul.desktop",
+  "identifier": "dev.haul.desktop.dev",
   "build": {
     "devUrl": "http://localhost:5173",
     "frontendDist": "../dist",
@@ -23,6 +23,7 @@
       }
     ],
     "security": {
+      "capabilities": ["default", "dev-test"],
       "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data:"
     }
   },

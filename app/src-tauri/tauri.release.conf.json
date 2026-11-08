@@ -1,0 +1,11 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "identifier": "dev.haul.desktop",
+  "app": {
+    "security": {
+      "capabilities": [
+        "default"
+      ]
+    }
+  }
+}
