@@ -276,6 +276,23 @@ async fn port_falls_back_when_taken() {
     assert_eq!(std::fs::read_to_string(&file).unwrap(), api.port.to_string());
 }
 
+/// Quitting removes the port file, so nothing points at a port Haul no longer holds.
+#[tokio::test]
+async fn stop_removes_port_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+    let core = AppCore::start_with(Store::open_in_memory().unwrap(), dir.path().to_path_buf(), never());
+    let file = dir.path().join("api-port");
+    let api = start_api(core, PairGate::new(Duration::from_secs(1)), Arc::new(|_| {}), p..=p + 50, Some(file.clone()))
+        .await
+        .unwrap();
+    assert!(file.is_file());
+    api.stop();
+    assert!(!file.exists(), "api-port is still there after stop");
+    // A second stop (or a file someone removed) is fine.
+    api.stop();
+}
+
 #[tokio::test]
 async fn all_ports_taken_is_error() {
     let dir = tempfile::tempdir().unwrap();

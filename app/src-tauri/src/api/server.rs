@@ -69,6 +69,8 @@ pub struct ApiHandle {
     stop: CancellationToken,
     closing: Arc<AtomicBool>,
     gate: PairGate,
+    /// The `api-port` file written at start; removed on stop.
+    port_file: Option<PathBuf>,
 }
 
 impl ApiHandle {
@@ -77,6 +79,12 @@ impl ApiHandle {
         // A pairing request waiting on the dialog would hold up the shutdown.
         self.gate.deny_waiting();
         self.stop.cancel();
+        if let Some(f) = &self.port_file
+            && let Err(e) = std::fs::remove_file(f)
+            && e.kind() != std::io::ErrorKind::NotFound
+        {
+            tracing::warn!(error = %e, "api-port file not removed");
+        }
     }
 }
 
@@ -245,7 +253,7 @@ pub async fn start_api(
         )));
     };
     let port = listener.local_addr()?.port();
-    if let Some(f) = port_file {
+    if let Some(f) = &port_file {
         std::fs::write(f, port.to_string())?;
     }
     let closing = Arc::new(AtomicBool::new(false));
@@ -267,7 +275,7 @@ pub async fn start_api(
         }
     });
     tracing::info!(port, "local API listening");
-    Ok(ApiHandle { port, stop, closing, gate })
+    Ok(ApiHandle { port, stop, closing, gate, port_file })
 }
 
 #[cfg(test)]
