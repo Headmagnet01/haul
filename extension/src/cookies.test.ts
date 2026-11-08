@@ -64,3 +64,35 @@ test('no_cookies_is_undefined', async () => {
   expect(await cookieHeader(fake([]).api, URL_, {})).toBeUndefined();
   expect(await cookieHeader(fake([]).api, URL_, { cookieStoreId: 'firefox-default' })).toBeUndefined();
 });
+
+test('first_party_isolation_keeps_the_referrers_cookies', async () => {
+  const calls: Record<string, unknown>[] = [];
+  const api: CookieApi = {
+    async getAll(details) {
+      calls.push(details);
+      if (!('firstPartyDomain' in details)) {
+        throw new Error("First-Party Isolation is enabled, but the required 'firstPartyDomain' attribute was not set.");
+      }
+      return [
+        { name: 'sid', value: '1', firstPartyDomain: 'shop.example' },
+        { name: 'track', value: '9', firstPartyDomain: 'ads.example' },
+      ];
+    },
+  };
+  const header = await cookieHeader(api, URL_, { cookieStoreId: 'firefox-default', referrer: 'https://www.shop.example/p' });
+  expect(header).toBe('sid=1');
+  expect(calls.at(-1)).toEqual({ url: URL_, storeId: 'firefox-default', firstPartyDomain: null });
+});
+
+test('first_party_isolation_without_referrer_uses_the_url_site', async () => {
+  const api: CookieApi = {
+    async getAll(details) {
+      if (!('firstPartyDomain' in details)) throw new Error("the required 'firstPartyDomain' attribute was not set");
+      return [
+        { name: 'a', value: '1', firstPartyDomain: 'shop.example' },
+        { name: 'b', value: '2', firstPartyDomain: 'other.example' },
+      ];
+    },
+  };
+  expect(await cookieHeader(api, URL_, { cookieStoreId: 'firefox-default' })).toBe('a=1');
+});

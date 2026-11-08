@@ -5,11 +5,15 @@
 // opened under another site keeps its cookies in a partition named after that top-level site. So
 // Firefox reads the container's unpartitioned cookies plus those partitioned under the referrer's
 // site; a partitioned cookie wins over an unpartitioned one of the same name.
+// With first-party isolation on (`privacy.firstparty.isolate`), every lookup must name a
+// `firstPartyDomain`: Firefox is asked for all of them and only the referrer's site is kept.
 
 export interface CookieLike {
   name: string;
   value: string;
   partitionKey?: { topLevelSite?: string };
+  /** Firefox with first-party isolation: the site the cookie was set under. */
+  firstPartyDomain?: string;
 }
 
 export interface CookieApi {
@@ -33,6 +37,16 @@ function httpHost(u: string | undefined): string | null {
   }
 }
 
+/** Whether `host` is `domain` or under it. */
+function covers(domain: string, host: string): boolean {
+  return domain !== '' && (host === domain || host.endsWith(`.${domain}`));
+}
+
+/** Firefox refuses a lookup without `firstPartyDomain` while first-party isolation is on. */
+function needsFirstParty(e: unknown): boolean {
+  return String(e instanceof Error ? e.message : e).includes('firstPartyDomain');
+}
+
 /** Whether a partition's top-level site is the referrer's site: the same host or a parent domain of it. */
 function sameSite(topLevelSite: string | undefined, referrerHost: string): boolean {
   const site = httpHost(topLevelSite);
@@ -46,11 +60,19 @@ export async function cookieHeader(api: CookieApi, url: string, src: CookieSourc
       list = await api.getAll({ url });
     } else {
       const storeId = src.cookieStoreId;
-      // `partitionKey: {}` returns every partition as well as the unpartitioned cookies.
-      const [plain, all] = await Promise.all([api.getAll({ url, storeId }), api.getAll({ url, storeId, partitionKey: {} })]);
       const ref = httpHost(src.referrer);
-      const parts = ref === null ? [] : all.filter((c) => c.partitionKey?.topLevelSite && sameSite(c.partitionKey.topLevelSite, ref));
-      list = [...plain.filter((c) => !c.partitionKey?.topLevelSite), ...parts];
+      try {
+        // `partitionKey: {}` returns every partition as well as the unpartitioned cookies.
+        const [plain, all] = await Promise.all([api.getAll({ url, storeId }), api.getAll({ url, storeId, partitionKey: {} })]);
+        const parts = ref === null ? [] : all.filter((c) => c.partitionKey?.topLevelSite && sameSite(c.partitionKey.topLevelSite, ref));
+        list = [...plain.filter((c) => !c.partitionKey?.topLevelSite), ...parts];
+      } catch (e) {
+        if (!needsFirstParty(e)) throw e;
+        // `null` asks for every first party; keep the ones set under the referrer's site (or the URL's).
+        const site = ref ?? httpHost(url);
+        const all = await api.getAll({ url, storeId, firstPartyDomain: null });
+        list = site === null ? [] : all.filter((c) => covers(c.firstPartyDomain ?? '', site));
+      }
     }
     const byName = new Map<string, string>();
     for (const c of list) byName.set(c.name, c.value);
