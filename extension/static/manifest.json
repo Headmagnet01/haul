@@ -1,0 +1,13 @@
+{
+  "manifest_version": 3,
+  "name": "Haul",
+  "version": "0.1.0",
+  "description": "Sends your downloads and links to Haul, the download manager.",
+  "minimum_chrome_version": "116",
+  "permissions": ["downloads", "contextMenus", "cookies", "storage", "activeTab", "scripting", "notifications"],
+  "host_permissions": ["<all_urls>", "http://127.0.0.1/*"],
+  "background": { "service_worker": "background.js", "type": "module" },
+  "content_scripts": [{ "matches": ["<all_urls>"], "js": ["content.js"], "run_at": "document_start", "all_frames": true }],
+  "action": { "default_title": "Haul", "default_popup": "popup.html" },
+  "options_page": "options.html"
+}
