@@ -25,11 +25,14 @@ class Bidi {
   private next = 1;
   private waiting = new Map<number, (m: BidiReply) => void>();
   private ws: WebSocket;
+  /** Events Firefox pushed (after a `session.subscribe`), oldest first. */
+  readonly events: { method: string; params: unknown }[] = [];
   constructor(ws: WebSocket) {
     this.ws = ws;
     ws.addEventListener('message', (e) => {
-      const m = JSON.parse(String(e.data)) as BidiReply;
+      const m = JSON.parse(String(e.data)) as BidiReply & { method?: string; params?: unknown };
       if (m.id !== undefined) this.waiting.get(m.id)?.(m);
+      else if (m.type === 'event' && m.method) this.events.push({ method: m.method, params: m.params });
     });
   }
   async send(method: string, params: object = {}): Promise<Record<string, unknown>> {
@@ -135,9 +138,10 @@ export class Firefox {
         .map(([k, v]) => `user_pref(${JSON.stringify(k)}, ${JSON.stringify(v)});`)
         .join('\n') + '\n',
     );
-    const proc = spawn(FIREFOX, ['-profile', opts.profileDir, '-no-remote', '--remote-debugging-port', String(opts.port), '--remote-allow-system-access'], {
-      stdio: 'ignore',
-      env: { ...process.env, MOZ_REMOTE_ALLOW_SYSTEM_ACCESS: '1' },
+    const proc = spawn(FIREFOX, ['-profile', opts.profileDir, '-no-remote', '--remote-debugging-port', String(opts.port)], {
+      // HAUL_FF_LOG=1 shows Firefox's own console (add-on errors included) on this process's stderr.
+      stdio: process.env.HAUL_FF_LOG ? ['ignore', 'inherit', 'inherit'] : 'ignore',
+      env: process.env.HAUL_FF_NOSYS ? process.env : { ...process.env, MOZ_REMOTE_ALLOW_SYSTEM_ACCESS: '1' },
     });
     const ws = await connect(`ws://127.0.0.1:${opts.port}/session`, 30_000);
     const bidi = new Bidi(ws);
@@ -167,6 +171,11 @@ export class Firefox {
   /** The raw BiDi command, for debugging a test. */
   send(method: string, params: object = {}): Promise<Record<string, unknown>> {
     return this.bidi.send(method, params);
+  }
+
+  /** Events received since a `session.subscribe`, for debugging a test. */
+  get events(): { method: string; params: unknown }[] {
+    return this.bidi.events;
   }
 
   async openTab(url: string): Promise<Tab> {
