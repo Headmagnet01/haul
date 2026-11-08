@@ -5,9 +5,11 @@
   import type { WhenDoneState } from '../lib/when-done-state.svelte';
   import type { AppState } from '../lib/app-state.svelte';
   import type { CollectorState } from '../lib/collector-state.svelte';
+  import type { UpdateState } from '../lib/update-state.svelte';
   import { formatSpeed } from '../lib/format';
 
-  let { app, collector, wd }: { app: AppState; collector: CollectorState; wd?: WhenDoneState } = $props();
+  let { app, collector, wd, up }: { app: AppState; collector: CollectorState; wd?: WhenDoneState; up?: UpdateState } =
+    $props();
   const limit = $derived(app.snapshot.speedLimit);
   const limitText = $derived(formatSpeed(limit.bps).replace(/\.0 /, ' '));
 </script>
@@ -42,6 +44,11 @@
     <span class="sep" aria-hidden="true"></span>
     <WhenDoneSelect {wd} />
   {/if}
+  {#if up?.status?.latest}
+    <button type="button" class="upd" title="Opens the release page in your browser" onclick={() => up.open()}>
+      <span class="dot" aria-hidden="true"></span>Update available <span class="num">{up.status.latest}</span>
+    </button>
+  {/if}
 </footer>
 
 <style>
@@ -62,4 +69,13 @@
   .tog[aria-pressed='true'] .sw { background: var(--signal); }
   .tog[aria-pressed='true'] .sw::after { transform: translateX(10px); }
   .lim { color: var(--ink-3); }
+  .upd {
+    margin-left: auto; display: inline-flex; align-items: center; gap: 7px; padding: 3px 8px; border-radius: 5px;
+    color: var(--ink); transition: background 0.15s;
+  }
+  .upd:hover { background: var(--line-2); }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--signal); }
+  @media (prefers-reduced-motion: reduce) {
+    .tog, .upd, .sw, .sw::after { transition: none; }
+  }
 </style>

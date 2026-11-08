@@ -1,7 +1,7 @@
 import type {
   Category, CollectorFilters, CollectorSnapshot, Destination, IntakeResult, PostProcSettings, PriorityName, Rule,
   PairedClient, RulesConfig, Run, Settings, SettingsPatch, Snapshot, Source, StartResult, Update, WhenDoneMode,
-  WhenDoneStatus,
+  UpdateStatus, WhenDoneStatus,
 } from './types';
 import { createMockBackend } from './backend-mock';
 import { tauriBackend } from './backend-tauri';
@@ -80,6 +80,14 @@ export interface Backend {
   openExtensionFolder(): Promise<void>;
   /** Haul asks the window to show a view (a click on a notification). Returns an unsubscribe function. */
   onShowView(cb: (view: string) => void): () => void;
+  /** The last update check's result, kept in memory by Haul. */
+  updateStatus(): Promise<UpdateStatus>;
+  /** Asks GitHub now, whatever the switch says. */
+  checkUpdatesNow(): Promise<UpdateStatus>;
+  /** Opens a Haul release page in the browser; any other address is refused. */
+  openRelease(url: string): Promise<void>;
+  /** The daily check found a newer release. Returns an unsubscribe function. */
+  onUpdateAvailable(cb: (u: { version: string; url: string }) => void): () => void;
   /** Returns an unsubscribe function. */
   onUpdate(cb: (u: Update) => void): () => void;
 }
@@ -93,7 +101,8 @@ export function getBackend(): Backend {
   if (instance) return instance;
   if (import.meta.env.VITE_BACKEND === 'mock') {
     const demo = new URLSearchParams(location.search).get('demo') === '1';
-    const mock = createMockBackend({ tickMs: 250, demo });
+    const update = new URLSearchParams(location.search).get('update') ?? undefined;
+    const mock = createMockBackend({ tickMs: 250, demo, update });
     (window as unknown as { __haulMockCalls: string[] }).__haulMockCalls = mock.calls;
     // e2e tests play the browser extension.
     (window as unknown as { __haulMock: object }).__haulMock = {
@@ -101,6 +110,7 @@ export function getBackend(): Backend {
       pairTimeout: () => mock.pairTimeout(),
       queueDrained: () => mock.queueDrained(),
       showView: (v: string) => mock.showView(v),
+      updateAvailable: (v: string) => mock.updateAvailable(v),
     };
     instance = mock;
   } else {

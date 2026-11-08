@@ -3,7 +3,7 @@
 import type { Backend } from './backend';
 import type {
   DownloadView, PackageView, PairedClient, PriorityName, Seg, Settings, SettingsPatch, Snapshot, SpeedLimit, State, Update,
-  WhenDoneStatus,
+  UpdateStatus, WhenDoneStatus,
 } from './types';
 import { createMockCollector } from './backend-mock-collector';
 import { createMockPostproc } from './backend-mock-postproc';
@@ -85,6 +85,7 @@ function readSettings(): Omit<Settings, 'watchClipboard' | 'speedLimit'> {
   const defaults = {
     downloadDir: 'C:\\Users\\you\\Downloads', maxParallel: MAX_PARALLEL, connections: 8, browserStart: 'now' as const,
     schedule: null, closeToTray: true, autostart: false, notifyFinished: true, trayHintShown: false, firstDownloadSeen: false,
+    checkUpdates: true,
   };
   try {
     const v = globalThis.sessionStorage?.getItem(SETTINGS_KEY);
@@ -115,8 +116,11 @@ function splitEven(size: number, n: number): Seg[] {
 }
 
 export function createMockBackend(
-  opts: { tickMs: number; demo: boolean; checkMs?: number },
-): Backend & { calls: string[]; pairRequest(browser: string): number; pairTimeout(): void; queueDrained(): void; showView(view: string): void } {
+  opts: { tickMs: number; demo: boolean; checkMs?: number; update?: string },
+): Backend & {
+  calls: string[]; pairRequest(browser: string): number; pairTimeout(): void; queueDrained(): void; showView(view: string): void;
+  updateAvailable(version: string): void;
+} {
   const calls: string[] = [];
   // Pairing: one waiting request at a time, like the app.
   let pairing: { n: number; browser: string } | null = null;
@@ -126,6 +130,12 @@ export function createMockBackend(
   const pairListeners = new Set<(n: number, browser: string) => void>();
   const pairClosedListeners = new Set<(n: number) => void>();
   const viewListeners = new Set<(view: string) => void>();
+  const updateListeners = new Set<(u: { version: string; url: string }) => void>();
+  // The app is 0.1.0; `update` (`?update=0.2.0`) stands in for a newer release on GitHub.
+  const tagUrl = (v: string) => `https://github.com/meraaki410/haul/releases/tag/v${v}`;
+  let update: UpdateStatus = {
+    current: '0.1.0', latest: opts.update ?? null, url: opts.update ? tagUrl(opts.update) : null, checkedAt: null, error: null,
+  };
   const endPairing = () => {
     if (pairing === null) return;
     const n = pairing.n;
@@ -652,6 +662,28 @@ export function createMockBackend(
     /** Like a click on one of the app's notifications. */
     showView(view) {
       for (const cb of viewListeners) cb(view);
+    },
+    async updateStatus() {
+      rec('updateStatus');
+      return { ...update };
+    },
+    async checkUpdatesNow() {
+      rec('checkUpdatesNow');
+      await new Promise((r) => setTimeout(r, 50));
+      update = { ...update, checkedAt: new Date().toISOString() };
+      return { ...update };
+    },
+    async openRelease(url) {
+      rec(`openRelease ${url}`);
+    },
+    onUpdateAvailable(cb) {
+      updateListeners.add(cb);
+      return () => updateListeners.delete(cb);
+    },
+    /** Like the daily check finding a newer release. */
+    updateAvailable(version) {
+      update = { ...update, latest: version, url: tagUrl(version) };
+      for (const cb of updateListeners) cb({ version, url: tagUrl(version) });
     },
   };
 }

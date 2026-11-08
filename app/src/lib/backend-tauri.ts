@@ -70,6 +70,10 @@ export const tauriBackend: Backend = {
   openExtensionFolder: () => invoke('open_extension_folder'),
   onShowView: (cb) => subscribe<string>('haul:show-view', cb),
   onUpdate: (cb) => subscribe<Update>('haul:update', cb),
+  updateStatus: () => invoke('update_status'),
+  checkUpdatesNow: () => invoke('check_updates_now'),
+  openRelease: (url) => invoke('open_release', { url }),
+  onUpdateAvailable: (cb) => subscribe<{ version: string; url: string }>('haul:update-available', cb),
   onPairRequest: (cb) => subscribe<{ n: number; browser: string }>('haul:pair-request', (p) => cb(p.n, p.browser)),
   onPairClosed: (cb) => subscribe<{ n: number }>('haul:pair-closed', (p) => cb(p.n)),
 };

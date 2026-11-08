@@ -230,6 +230,16 @@ export interface Settings {
   notifyFinished: boolean;
   trayHintShown: boolean;
   firstDownloadSeen: boolean;
+  checkUpdates: boolean;
+}
+
+/** What the last update check found. `latest` and `url` are set only when a newer release exists. */
+export interface UpdateStatus {
+  current: string;
+  latest: string | null;
+  url: string | null;
+  checkedAt: string | null;
+  error: string | null;
 }
 
 export type WhenDoneMode = 'nothing' | 'sleep' | 'shutdown';

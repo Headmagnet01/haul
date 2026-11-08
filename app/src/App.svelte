@@ -21,6 +21,7 @@
   import { createAppState } from './lib/app-state.svelte';
   import { createCollectorState } from './lib/collector-state.svelte';
   import { createPostprocState } from './lib/postproc-state.svelte';
+  import { createUpdateState } from './lib/update-state.svelte';
 
   const app = createAppState(getBackend());
   const collector = createCollectorState(app.backend, { showToast: app.showToast, onStarted: () => void app.load() });
@@ -58,6 +59,8 @@
   void app.load();
   void collector.load();
   void post.load();
+  const up = createUpdateState(app.backend);
+  void up.load();
   const wd = createWhenDoneState(app.backend, { showToast: (t) => app.showToast(t) });
   const rules = createRulesState(app.backend, { showToast: (t) => app.showToast(t) });
   $effect(() => {
@@ -143,11 +146,11 @@
   {:else if app.view === 'rules'}
     <RulesView rs={rules} backend={app.backend} />
   {:else if app.view === 'settings'}
-    <SettingsView ss={settings} backend={app.backend} {browsersRev} />
+    <SettingsView ss={settings} backend={app.backend} {browsersRev} {up} />
   {:else}
     <Placeholder title={label} />
   {/if}
-  <StatusBar {app} {collector} {wd} />
+  <StatusBar {app} {collector} {wd} {up} />
 </div>
 <DeleteDialog {app} />
 <CountdownDialog {wd} />

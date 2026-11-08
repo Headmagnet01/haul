@@ -1,10 +1,12 @@
 <script lang="ts">
   import type { Backend } from '../lib/backend';
   import type { SettingsState } from '../lib/settings-state.svelte';
+  import type { UpdateState } from '../lib/update-state.svelte';
   import { WEEKDAYS, type Settings, type SettingsPatch, type Weekday } from '../lib/types';
   import BrowserList from './BrowserList.svelte';
 
-  let { ss, backend, browsersRev = 0 }: { ss: SettingsState; backend: Backend; browsersRev?: number } = $props();
+  let { ss, backend, browsersRev = 0, up }: { ss: SettingsState; backend: Backend; browsersRev?: number; up?: UpdateState } =
+    $props();
 
   const s = $derived(ss.settings);
   const MB = 1_000_000;
@@ -124,6 +126,18 @@
           {@render sw('Start Haul when I sign in to Windows', s.autostart, (v) => ({ autostart: v }), 'Haul starts in the tray, without a window.')}
           {@render err('autostart')}
           {@render sw('Notify me when a download finishes', s.notifyFinished, (v) => ({ notifyFinished: v }))}
+          {@render sw('Check for updates', s.checkUpdates, (v) => ({ checkUpdates: v }), 'Once a day Haul asks GitHub for its latest version. Nothing else is sent.')}
+          {#if up}
+            <div class="check">
+              <button type="button" class="btn sm" disabled={up.checking} onclick={() => up.checkNow()}>Check now</button>
+              <p class="help" aria-live="polite">
+                {up.checking ? 'Checking…' : up.message()}
+                {#if !up.checking && up.status?.latest && up.status.url}
+                  <a href={up.status.url} onclick={(e) => { e.preventDefault(); void up.open(); }}>Open the release page</a>
+                {/if}
+              </p>
+            </div>
+          {/if}
         </section>
 
         <section aria-labelledby="h-browsers">
@@ -176,6 +190,8 @@
   .tog[aria-checked='true'] .sw { background: var(--signal); }
   .tog[aria-checked='true'] .sw::after { transform: translateX(10px); }
   .sm { padding: 3px 8px; font-size: 12px; flex: none; }
+  .check { display: flex; align-items: center; gap: 10px; padding-left: 8px; }
+  .check a { color: var(--ink); text-decoration: underline; text-underline-offset: 2px; }
   @media (prefers-reduced-motion: reduce) {
     .sw, .sw::after { transition: none; }
   }
