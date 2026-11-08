@@ -67,6 +67,7 @@ export const tauriBackend: Backend = {
   whenDoneCancel: () => invoke('when_done_cancel'),
   whenDoneNow: () => invoke('when_done_now'),
   onWhenDone: (cb) => subscribe<WhenDoneStatus>('haul:when-done', cb),
+  onShowView: (cb) => subscribe<string>('haul:show-view', cb),
   onUpdate: (cb) => subscribe<Update>('haul:update', cb),
   onPairRequest: (cb) => subscribe<{ n: number; browser: string }>('haul:pair-request', (p) => cb(p.n, p.browser)),
   onPairClosed: (cb) => subscribe<{ n: number }>('haul:pair-closed', (p) => cb(p.n)),

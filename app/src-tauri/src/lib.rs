@@ -8,6 +8,7 @@ pub mod commands;
 pub mod core;
 pub mod dto;
 pub mod settings;
+pub mod toast;
 pub mod tray;
 pub mod when_done;
 
@@ -23,15 +24,13 @@ use tauri::{Emitter, Manager, RunEvent};
 
 /// The one-time notice that closing the window didn't quit Haul.
 fn notify_tray_hint(app: &tauri::AppHandle) {
-    use tauri_plugin_notification::NotificationExt;
-    let n = app
-        .notification()
-        .builder()
-        .title("Haul is still running")
-        .body("Downloads continue in the tray. Right-click the tray icon to quit.");
-    if let Err(e) = n.show() {
-        tracing::warn!(error = %e, "tray notice failed");
-    }
+    let spec = crate::toast::ToastSpec {
+        title: "Haul is still running".into(),
+        body: "Downloads continue in the tray. Right-click the tray icon to quit.".into(),
+        open_folder: None,
+        click_view: None,
+    };
+    crate::toast::show(app, spec);
 }
 
 /// Keeps the log writer alive for the life of the app.
@@ -110,7 +109,6 @@ pub fn run() {
             Some(vec!["--hidden"]),
         ))
         .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             commands::snapshot,
@@ -182,10 +180,11 @@ pub fn run() {
             let db = data_dir.join("haul.db");
             let notifier = app.handle().clone();
             let deps = AppCore::real_deps(seven_zip_path(app), move |n| {
-                use tauri_plugin_notification::NotificationExt;
-                match notifier.notification().builder().title(&n.title).body(&n.body).show() {
-                    Ok(()) => tracing::info!(title = %n.title, "notification sent"),
-                    Err(e) => tracing::warn!(error = %e, "notification failed"),
+                let on = notifier.try_state::<AppCore>().is_none_or(|c| c.settings().notify_finished);
+                if crate::toast::should_show(&n, on) {
+                    crate::toast::show(&notifier, crate::toast::toast_for(&n));
+                } else {
+                    tracing::info!(title = %n.title, "notification off");
                 }
             });
             let core = tauri::async_runtime::block_on(async { AppCore::start(&db, download_dir, deps) })?;

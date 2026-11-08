@@ -104,3 +104,14 @@ test('finished_has_no_violations', async ({ page }) => {
   const roles = await new AxeBuilder({ page }).include('main').withTags(['wcag2a', 'wcag2aa']).analyze();
   expect(roles.violations.map((v) => `${v.id}: ${v.nodes.length}`)).toEqual([]);
 });
+
+test('toast_click_shows_finished', async ({ page }) => {
+  await page.goto('/?demo=1');
+  await expect(queue(page)).toBeVisible();
+  await page.evaluate(() => (window as unknown as { __haulMock: { showView(v: string): void } }).__haulMock.showView('finished'));
+  await expect(page.getByRole('heading', { name: 'Finished', level: 1 })).toBeVisible();
+  await expect(nav(page, /Finished/)).toHaveAttribute('aria-current', 'page');
+  // An unknown view name is ignored.
+  await page.evaluate(() => (window as unknown as { __haulMock: { showView(v: string): void } }).__haulMock.showView('nope'));
+  await expect(page.getByRole('heading', { name: 'Finished', level: 1 })).toBeVisible();
+});

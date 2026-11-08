@@ -116,7 +116,7 @@ function splitEven(size: number, n: number): Seg[] {
 
 export function createMockBackend(
   opts: { tickMs: number; demo: boolean; checkMs?: number },
-): Backend & { calls: string[]; pairRequest(browser: string): number; pairTimeout(): void; queueDrained(): void } {
+): Backend & { calls: string[]; pairRequest(browser: string): number; pairTimeout(): void; queueDrained(): void; showView(view: string): void } {
   const calls: string[] = [];
   // Pairing: one waiting request at a time, like the app.
   let pairing: { n: number; browser: string } | null = null;
@@ -125,6 +125,7 @@ export function createMockBackend(
   let clients: PairedClient[] = [];
   const pairListeners = new Set<(n: number, browser: string) => void>();
   const pairClosedListeners = new Set<(n: number) => void>();
+  const viewListeners = new Set<(view: string) => void>();
   const endPairing = () => {
     if (pairing === null) return;
     const n = pairing.n;
@@ -633,6 +634,14 @@ export function createMockBackend(
     onPairClosed(cb) {
       pairClosedListeners.add(cb);
       return () => pairClosedListeners.delete(cb);
+    },
+    onShowView(cb) {
+      viewListeners.add(cb);
+      return () => viewListeners.delete(cb);
+    },
+    /** Like a click on one of the app's notifications. */
+    showView(view) {
+      for (const cb of viewListeners) cb(view);
     },
   };
 }

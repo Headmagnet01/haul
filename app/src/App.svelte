@@ -32,6 +32,11 @@
   $effect(() => {
     app.runs = post.runs;
   });
+  // A click on a notification shows a view.
+  app.backend.onShowView((v) => {
+    const found = VIEWS.find((x) => x.id === v);
+    if (found) app.view = found.id;
+  });
   void app.load();
   void collector.load();
   void post.load();
