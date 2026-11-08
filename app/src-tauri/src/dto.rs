@@ -140,3 +140,15 @@ pub struct RulesConfig {
     pub rules: Vec<Rule>,
     pub passwords: Vec<i64>,
 }
+
+/// One download the browser extension caught (`POST /v1/capture`).
+#[derive(Clone, Debug, Deserialize)]
+pub struct CaptureRequest {
+    pub url: String,
+    pub filename: Option<String>,
+    pub size: Option<u64>,
+    pub referrer: Option<String>,
+    pub user_agent: Option<String>,
+    /// Joined `name=value; ...`, exactly as a `Cookie` header.
+    pub cookies: Option<String>,
+}

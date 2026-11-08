@@ -12,20 +12,21 @@ use haul_engine::{
     Download, DownloadState, EngineError, EventBus, Grabber, HostLimiter, Priority, ProbeFn, Queue, RateLimiter,
     Schedule, StartDefaults, Store, TransferConfig, TransferCtx, extract_links, http_prober, naming,
 };
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 pub const KEY_SPEED_LIMIT: &str = "speed_limit";
 pub const KEY_DOWNLOAD_DIR: &str = "download_dir";
 pub const KEY_MAX_PARALLEL: &str = "max_parallel";
 pub const KEY_WATCH_CLIPBOARD: &str = "watch_clipboard";
 pub const KEY_COLLECTOR_FILTERS: &str = "collector_filters";
-/// Where a link may come from; the browser joins in plan 5.
-const SOURCES: [&str; 3] = ["clipboard", "paste", "drop"];
+/// Where a link may come from.
+const SOURCES: [&str; 4] = ["clipboard", "paste", "drop", "browser"];
 const DEFAULT_MAX_PARALLEL: usize = 3;
-const DEFAULT_CONNECTIONS: u32 = 8;
+pub(crate) const DEFAULT_CONNECTIONS: u32 = 8;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FolderTarget {
@@ -36,13 +37,15 @@ pub enum FolderTarget {
 /// Cheap to clone: every field is a shared handle, so commands can move a copy onto a blocking thread.
 #[derive(Clone)]
 pub struct AppCore {
-    store: Store,
+    pub(crate) store: Store,
     ctx: TransferCtx,
-    queue: Queue,
-    grabber: Grabber,
+    pub(crate) queue: Queue,
+    pub(crate) grabber: Grabber,
     clipboard_on: Arc<AtomicBool>,
-    download_dir: PathBuf,
+    pub(crate) download_dir: PathBuf,
     postproc: PostProc,
+    /// Browser captures in the last few seconds, by URL: (download id, when).
+    pub(crate) recent: Arc<Mutex<HashMap<String, (i64, Instant)>>>,
 }
 
 fn priority_str(p: Priority) -> &'static str {
@@ -179,7 +182,16 @@ impl AppCore {
         let grabber = Grabber::new(store.clone(), ctx.events.clone(), prober);
         let watch = store.get_setting(KEY_WATCH_CLIPBOARD).ok().flatten().and_then(|v| v.as_bool()).unwrap_or(false);
         let postproc = PostProc::start(store.clone(), ctx.events.clone(), queue.clone(), deps, download_dir.clone());
-        AppCore { store, ctx, queue, grabber, clipboard_on: Arc::new(AtomicBool::new(watch)), download_dir, postproc }
+        AppCore {
+            store,
+            ctx,
+            queue,
+            grabber,
+            clipboard_on: Arc::new(AtomicBool::new(watch)),
+            download_dir,
+            postproc,
+            recent: Arc::default(),
+        }
     }
 
     pub fn events(&self) -> EventBus {
@@ -500,7 +512,7 @@ mod tests {
     async fn add_links_rejects_unknown_source() {
         let dir = tempfile::tempdir().unwrap();
         let c = core_fake(Store::open_in_memory().unwrap(), dir.path());
-        assert!(c.add_links("https://a.org/x", "browser").is_err());
+        assert!(c.add_links("https://a.org/x", "fax").is_err());
         assert!(c.collector_snapshot().unwrap().links.is_empty());
     }
 

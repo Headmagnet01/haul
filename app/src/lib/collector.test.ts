@@ -129,5 +129,6 @@ test('labels', () => {
   expect(sourceLabel('clipboard')).toBe('Clipboard');
   expect(sourceLabel('paste')).toBe('Paste');
   expect(sourceLabel('drop')).toBe('Drop');
+  expect(sourceLabel('browser')).toBe('Browser');
   expect(sourceLabel('Edge · page')).toBe('Edge · page');
 });

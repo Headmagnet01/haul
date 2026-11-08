@@ -1,6 +1,7 @@
 //! Haul's desktop app: Tauri glue around the engine.
 
 pub mod bridge;
+pub mod capture;
 pub mod clipboard;
 pub mod commands;
 pub mod core;

@@ -109,5 +109,5 @@ export function dupLabel(k: DupKind): string {
 }
 
 export function sourceLabel(s: string): string {
-  return ({ clipboard: 'Clipboard', paste: 'Paste', drop: 'Drop' } as Record<string, string>)[s] ?? s;
+  return ({ clipboard: 'Clipboard', paste: 'Paste', drop: 'Drop', browser: 'Browser' } as Record<string, string>)[s] ?? s;
 }

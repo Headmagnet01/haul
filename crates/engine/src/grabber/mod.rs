@@ -186,6 +186,16 @@ impl Grabber {
 
     /// Adds links as one batch and starts checking them. Links already waiting are skipped.
     pub fn intake(&self, links: Vec<String>, source: &str) -> Result<IntakeResult, EngineError> {
+        self.intake_labelled(links, source, None)
+    }
+
+    /// Like `intake`, with the batch named `label` (a page title) instead of the paste time.
+    pub fn intake_labelled(
+        &self,
+        links: Vec<String>,
+        source: &str,
+        label: Option<&str>,
+    ) -> Result<IntakeResult, EngineError> {
         let _turn = self.take_turn();
         let mut seen: HashSet<String> = self.store.list_links()?.into_iter().map(|l| l.url).collect();
         let total = links.len();
@@ -194,7 +204,8 @@ impl Grabber {
         if fresh.is_empty() {
             return Ok(IntakeResult { added: 0, skipped });
         }
-        let batch = self.store.create_batch(source, &pasted_label())?;
+        let label = label.map(str::trim).filter(|l| !l.is_empty()).map_or_else(pasted_label, str::to_string);
+        let batch = self.store.create_batch(source, &label)?;
         let ids = self.store.insert_links(batch, &fresh)?;
         for (id, url) in ids.into_iter().zip(fresh.iter()) {
             self.spawn_probe(id, url.clone());

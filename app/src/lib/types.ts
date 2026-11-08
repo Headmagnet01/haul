@@ -68,7 +68,7 @@ export interface Update {
 
 export type LinkStatus = 'checking' | 'online' | 'offline' | 'expired' | 'error';
 export type DupKind = 'downloaded' | 'queued' | 'collector';
-export type Source = 'clipboard' | 'paste' | 'drop';
+export type Source = 'clipboard' | 'paste' | 'drop' | 'browser';
 export type ArchiveKind = 'rar' | '7z' | 'zip';
 
 export interface CollectedLink {
