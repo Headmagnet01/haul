@@ -12,7 +12,7 @@ A free, open-source Windows download manager. It pairs IDM's fast engine and bro
 ## Where things stand
 | | |
 |---|---|
-| Branch | `feat/browser-extension` (13 commits on `master` at `41cb998`). No Git remote exists. |
+| Branch | `feat/browser-extension`, cut from `master` at `41cb998`. No Git remote exists. |
 | Done | Plans 1–4 merged. Plan 5 built: `docs/superpowers/plans/2026-11-08-haul-plan-5-browser-extension.md`, Tasks 1–10, design in `docs/superpowers/specs/2026-11-08-haul-browser-extension-design.md`. |
 | Tests (8 Nov) | Rust: 310 tests (one known timing flake, see below). Front end: 78 Vitest, 56 Playwright e2e tests in light and dark (112 runs). Extension: 32 Vitest. Clippy, rustfmt, svelte-check and the extension's `tsc` are clean. Real-app smoke 3/4: the clipboard test can't run `Set-Clipboard` in a sandboxed session (it passed on 6 Nov). |
 | Real browser (8 Nov) | `app/e2e-real/extension.spec.ts` loaded the extension into Edge, found Haul, paired through the real Allow dialog. It found a real bug (status must be a POST, below). The click → Haul steps could not run: Edge started from the sandboxed session never completes a download, even with no extension and no Playwright attached. |
