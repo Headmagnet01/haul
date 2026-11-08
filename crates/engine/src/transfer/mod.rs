@@ -201,6 +201,46 @@ fn fingerprint_mismatch(old: &ProbeInfo, new: &ProbeInfo) -> Option<&'static str
     }
 }
 
+/// A URL for the Mark of the Web: no `user:password`.
+fn without_credentials(url: &str) -> String {
+    match url::Url::parse(url) {
+        Ok(mut u) => {
+            let _ = u.set_username("");
+            let _ = u.set_password(None);
+            u.to_string()
+        }
+        Err(_) => url.to_string(),
+    }
+}
+
+/// Marks a finished file as from the internet (the `Zone.Identifier` stream browsers write), so
+/// Windows SmartScreen and Office's Protected View check it on open. A drive without streams
+/// (FAT32, exFAT) can't hold the mark; that is logged, not an error.
+fn mark_of_the_web(file: &Path, url: &str, referrer: Option<&str>) {
+    let mut text = String::from(
+        "[ZoneTransfer]
+ZoneId=3
+",
+    );
+    if let Some(r) = referrer {
+        text.push_str(&format!(
+            "ReferrerUrl={}
+",
+            without_credentials(r)
+        ));
+    }
+    text.push_str(&format!(
+        "HostUrl={}
+",
+        without_credentials(url)
+    ));
+    let mut stream = file.as_os_str().to_owned();
+    stream.push(":Zone.Identifier");
+    if let Err(e) = std::fs::write(&stream, text) {
+        tracing::warn!(file = %file.display(), error = %e, "could not write the Mark of the Web");
+    }
+}
+
 /// A download folder Haul can't make or write in (a removed drive, a read-only folder).
 fn folder_unavailable(dir: &Path, e: std::io::Error) -> EngineError {
     tracing::warn!(dir = %dir.display(), error = %e, "download folder unavailable");
@@ -327,6 +367,8 @@ async fn transfer(job: &TransferJob, ctx: &TransferCtx) -> Result<Option<PathBuf
                     let _ = std::fs::remove_file(&target);
                     return Err(EngineError::Io(e));
                 }
+                let referrer = headers.get(reqwest::header::REFERER).and_then(|v| v.to_str().ok());
+                mark_of_the_web(&target, &d.url, referrer);
                 ctx.store.set_completed(id, &target)?;
                 ctx.store.save_segments(id, &[])?;
                 return Ok(Some(target));

@@ -33,7 +33,8 @@ impl Extractor for SevenZip {
         let mut o = std::ffi::OsString::from("-o");
         o.push(out);
         let output = Command::new(&self.exe)
-            .args(["x", "-y", "-bso0", "-bsp0"])
+            // -snz: extracted files inherit the archive's Mark of the Web, so SmartScreen still checks them.
+            .args(["x", "-y", "-bso0", "-bsp0", "-snz"])
             .arg(format!("-p{password}"))
             .arg(o)
             .arg(first_volume)

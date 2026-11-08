@@ -488,3 +488,47 @@ async fn missing_download_folder_says_so() {
         other => panic!("expected Failed, got {other:?}"),
     }
 }
+
+fn zone_identifier(p: &Path) -> String {
+    std::fs::read_to_string(format!("{}:Zone.Identifier", p.display())).expect("no Zone.Identifier stream")
+}
+
+#[tokio::test]
+async fn finished_file_has_mark_of_the_web() {
+    let srv = serve(Spec::new(100_000)).await;
+    let dir = tempfile::tempdir().unwrap();
+    let c = ctx(16, TransferConfig::for_tests());
+    let id = add(&c, &srv.url, dir.path(), 2, None);
+    let p = completed(run(&c, id).await);
+    assert_eq!(
+        zone_identifier(&p),
+        format!(
+            "[ZoneTransfer]
+ZoneId=3
+HostUrl={}
+",
+            srv.url
+        )
+    );
+}
+
+#[tokio::test]
+async fn mark_of_the_web_keeps_referrer_and_drops_passwords() {
+    let srv = serve(Spec::new(100_000)).await;
+    let dir = tempfile::tempdir().unwrap();
+    let c = ctx(16, TransferConfig::for_tests());
+    let url = srv.url.replacen("http://", "http://me:secret@", 1);
+    let id = add_with_headers(&c, &url, dir.path(), r#"{"Referer":"https://site.example/page"}"#);
+    let p = completed(run(&c, id).await);
+    assert_eq!(
+        zone_identifier(&p),
+        format!(
+            "[ZoneTransfer]
+ZoneId=3
+ReferrerUrl=https://site.example/page
+HostUrl={}
+",
+            srv.url
+        )
+    );
+}

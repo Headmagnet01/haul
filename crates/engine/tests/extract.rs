@@ -85,3 +85,20 @@ fn missing_7zip_is_failed() {
     let r = SevenZip { exe: out.path().join("nope.exe") }.extract(&fixture("plain.zip"), out.path(), "");
     assert!(matches!(r, ExtractOutcome::Failed(_)), "{r:?}");
 }
+
+#[test]
+fn extracted_files_keep_mark_of_the_web() {
+    let dir = tempfile::tempdir().unwrap();
+    let zip = dir.path().join("plain.zip");
+    std::fs::copy(fixture("plain.zip"), &zip).unwrap();
+    let mark = "[ZoneTransfer]
+ZoneId=3
+HostUrl=https://a.org/plain.zip
+";
+    std::fs::write(format!("{}:Zone.Identifier", zip.display()), mark).unwrap();
+    let out = dir.path().join("x");
+    assert_eq!(sz().extract(&zip, &out, ""), ExtractOutcome::Ok);
+    let got = std::fs::read_to_string(format!("{}:Zone.Identifier", out.join("hello.txt").display()))
+        .expect("extracted file has no Zone.Identifier");
+    assert!(got.contains("ZoneId=3"), "{got}");
+}
