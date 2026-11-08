@@ -28,13 +28,18 @@ fn row(r: &Row) -> rusqlite::Result<PairedClient> {
 }
 
 impl Store {
+    /// Pairs `origin`; pairing the same extension again replaces its row, so its old key stops working.
     pub fn add_paired_client(&self, browser: &str, origin: &str, token_hash: &str) -> Result<i64, EngineError> {
-        let c = self.lock();
-        c.execute(
+        let mut c = self.lock();
+        let tx = c.transaction()?;
+        tx.execute("DELETE FROM paired_clients WHERE origin = ?1", [origin])?;
+        tx.execute(
             "INSERT INTO paired_clients (browser, origin, token_hash) VALUES (?1, ?2, ?3)",
             params![browser, origin, token_hash],
         )?;
-        Ok(c.last_insert_rowid())
+        let id = tx.last_insert_rowid();
+        tx.commit()?;
+        Ok(id)
     }
 
     pub fn paired_client_by_hash(&self, token_hash: &str) -> Result<Option<PairedClient>, EngineError> {
@@ -80,6 +85,19 @@ mod tests {
         assert_eq!(c.origin, "chrome-extension://abc");
         assert_eq!(c.last_seen, None);
         assert!(!c.created_at.is_empty());
+    }
+
+    /// Pairing the same extension again replaces its row and key instead of adding a second one.
+    #[test]
+    fn same_origin_replaces_row() {
+        let s = Store::open_in_memory().unwrap();
+        s.add_paired_client("Microsoft Edge", "chrome-extension://abc", "h1").unwrap();
+        s.add_paired_client("Google Chrome", "chrome-extension://other", "h9").unwrap();
+        s.add_paired_client("Microsoft Edge", "chrome-extension://abc", "h2").unwrap();
+        assert!(s.paired_client_by_hash("h1").unwrap().is_none(), "the old key still works");
+        assert!(s.paired_client_by_hash("h2").unwrap().is_some());
+        assert!(s.paired_client_by_hash("h9").unwrap().is_some());
+        assert_eq!(s.list_paired_clients().unwrap().len(), 2);
     }
 
     #[test]

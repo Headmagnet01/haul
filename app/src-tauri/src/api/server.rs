@@ -24,6 +24,14 @@ const MAX_BODY: usize = 2 * 1024 * 1024;
 const MAX_LINKS: usize = 5000;
 const MAX_BROWSER_NAME: usize = 64;
 
+/// The name an extension sends, safe to show and log: control characters removed, trimmed,
+/// at most 64 characters, and "A browser" when nothing is left.
+fn clean_browser_name(raw: &str) -> String {
+    let kept: String = raw.chars().filter(|c| !c.is_control()).collect();
+    let name: String = kept.trim().chars().take(MAX_BROWSER_NAME).collect();
+    if name.is_empty() { "A browser".to_string() } else { name }
+}
+
 /// What the window hears about pairing requests.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PairEvent {
@@ -160,8 +168,7 @@ async fn pair(
     Extension(CallerOrigin(origin)): Extension<CallerOrigin>,
     Json(body): Json<PairBody>,
 ) -> Response {
-    let browser: String = body.browser.trim().chars().take(MAX_BROWSER_NAME).collect();
-    let browser = if browser.is_empty() { "A browser".to_string() } else { browser };
+    let browser = clean_browser_name(&body.browser);
     let Ok(ticket) = api.gate.request() else {
         return status_only(StatusCode::TOO_MANY_REQUESTS, "a pairing request is already waiting");
     };
@@ -261,4 +268,26 @@ pub async fn start_api(
     });
     tracing::info!(port, "local API listening");
     Ok(ApiHandle { port, stop, closing, gate })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pairing_name_strips_controls() {
+        assert_eq!(clean_browser_name("Edge\u{1b}[31m\n"), "Edge[31m");
+        assert_eq!(clean_browser_name("Microsoft\u{0}\u{7f} Edge"), "Microsoft Edge");
+    }
+
+    #[test]
+    fn pairing_name_cut_to_64() {
+        assert_eq!(clean_browser_name(&"é".repeat(100)).chars().count(), 64);
+    }
+
+    #[test]
+    fn pairing_name_all_control_chars() {
+        assert_eq!(clean_browser_name("\n\t\u{1b}"), "A browser");
+        assert_eq!(clean_browser_name("   "), "A browser");
+    }
 }
