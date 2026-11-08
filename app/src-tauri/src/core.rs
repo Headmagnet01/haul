@@ -402,24 +402,36 @@ impl AppCore {
         }
     }
 
-    /// The ids among `ids` whose saved file exists.
+    /// The ids among `ids` whose saved file exists. A file a newer download saved at the same
+    /// path (the old one was deleted by hand) belongs to that newer row, not to the stale one.
     pub fn files_exist(&self, ids: &[i64]) -> Vec<i64> {
+        let all = self.store.list_downloads().unwrap_or_default();
         ids.iter()
             .copied()
-            .filter(|&id| self.store.get_download(id).ok().and_then(|d| d.target_path).is_some_and(|p| p.exists()))
+            .filter(|&id| {
+                let Some(p) = all.iter().find(|d| d.id == id).and_then(|d| d.target_path.as_ref()) else {
+                    return false;
+                };
+                p.exists() && !all.iter().any(|o| o.id > id && o.target_path.as_ref() == Some(p))
+            })
             .collect()
     }
 
-    /// Sends each saved file to the Recycle Bin, then deletes its row. A file already gone is not an error.
+    /// Sends each saved file to the Recycle Bin, then deletes its row. A file already gone is not an error,
+    /// and neither is one another download (not being deleted) saved at the same path: it is left alone.
     /// Stops at the first failure, leaving that row and the ones after it.
     pub fn delete_files(&self, ids: &[i64]) -> Result<(), String> {
+        let all = self.store.list_downloads().map_err(|e| e.to_string())?;
+        let shared = |p: &PathBuf| all.iter().any(|o| !ids.contains(&o.id) && o.target_path.as_ref() == Some(p));
+        let mut recycled: HashSet<PathBuf> = HashSet::new();
         for &id in ids {
             let d = self.store.get_download(id).map_err(|e| e.to_string())?;
-            if let Some(p) = d.target_path.clone().filter(|p| p.exists())
-                && let Err(e) = self.recycler.recycle(std::slice::from_ref(&p))
-            {
-                let name = p.file_name().map_or_else(|| display_name(&d), |n| n.to_string_lossy().into_owned());
-                return Err(if in_use(&e) { format!("{name} is in use") } else { format!("{name}: {e}") });
+            if let Some(p) = d.target_path.clone().filter(|p| p.exists() && !shared(p) && !recycled.contains(p)) {
+                if let Err(e) = self.recycler.recycle(std::slice::from_ref(&p)) {
+                    let name = p.file_name().map_or_else(|| display_name(&d), |n| n.to_string_lossy().into_owned());
+                    return Err(if in_use(&e) { format!("{name} is in use") } else { format!("{name}: {e}") });
+                }
+                recycled.insert(p);
             }
             self.queue.remove(id);
         }
@@ -1126,6 +1138,26 @@ mod tests {
         assert_eq!(err, "a.bin is in use");
         let left: Vec<i64> = c.store.list_downloads().unwrap().iter().map(|d| d.id).collect();
         assert_eq!(left, vec![a, b]);
+    }
+
+    #[tokio::test]
+    async fn stale_row_never_recycles_newer_same_path_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let bin = Arc::new(FakeBin::default());
+        let c = core(Store::open_in_memory().unwrap(), dir.path()).with_recycler(bin.clone());
+        // The first file was deleted by hand, so a newer download took the same name.
+        let (old, _) = finished_one(&c, dir.path(), "a.bin", false);
+        let (new, path) = finished_one(&c, dir.path(), "a.bin", true);
+        assert_eq!(c.files_exist(&[old, new]), vec![new]);
+        c.delete_files(&[old]).unwrap();
+        assert!(bin.seen.lock().unwrap().is_empty(), "the newer download's file was recycled");
+        let left: Vec<i64> = c.store.list_downloads().unwrap().iter().map(|d| d.id).collect();
+        assert_eq!(left, vec![new]);
+        // Deleting both together recycles the file once.
+        let (old2, _) = finished_one(&c, dir.path(), "a.bin", false);
+        c.delete_files(&[old2, new]).unwrap();
+        assert_eq!(*bin.seen.lock().unwrap(), vec![path]);
+        assert!(c.store.list_downloads().unwrap().is_empty());
     }
 
     #[tokio::test]
