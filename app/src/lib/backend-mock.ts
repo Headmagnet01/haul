@@ -1,7 +1,7 @@
 // A small simulated engine for the browser and the tests. Deterministic: sizes and speeds come from the URL.
 
 import type { Backend } from './backend';
-import type { DownloadView, PackageView, PriorityName, Seg, Snapshot, SpeedLimit, State, Update } from './types';
+import type { DownloadView, PackageView, PairedClient, PriorityName, Seg, Snapshot, SpeedLimit, State, Update } from './types';
 import { createMockCollector } from './backend-mock-collector';
 import { createMockPostproc } from './backend-mock-postproc';
 
@@ -87,8 +87,15 @@ function splitEven(size: number, n: number): Seg[] {
   });
 }
 
-export function createMockBackend(opts: { tickMs: number; demo: boolean; checkMs?: number }): Backend & { calls: string[] } {
+export function createMockBackend(
+  opts: { tickMs: number; demo: boolean; checkMs?: number },
+): Backend & { calls: string[]; pairRequest(browser: string): void } {
   const calls: string[] = [];
+  // Pairing: one waiting request at a time, like the app.
+  let pairing: string | null = null;
+  let nextClient = 1;
+  let clients: PairedClient[] = [];
+  const pairListeners = new Set<(browser: string) => void>();
   const packages: PackageView[] = [];
   let downloads: DownloadView[] = [];
   const sims = new Map<number, Sim>();
@@ -435,6 +442,29 @@ export function createMockBackend(opts: { tickMs: number; demo: boolean; checkMs
     onUpdate(cb) {
       listeners.add(cb);
       return () => listeners.delete(cb);
+    },
+    pairRequest(browser) {
+      if (pairing !== null) return;
+      pairing = browser;
+      for (const cb of pairListeners) cb(browser);
+    },
+    async pairAnswer(allow) {
+      rec(`pairAnswer:${allow}`);
+      if (pairing === null) return;
+      if (allow) clients.push({ id: nextClient++, browser: pairing, createdAt: nowIso(), lastSeen: null });
+      pairing = null;
+    },
+    async pairedClients() {
+      rec('pairedClients');
+      return structuredClone(clients);
+    },
+    async removePairedClient(id) {
+      rec('removePairedClient');
+      clients = clients.filter((c) => c.id !== id);
+    },
+    onPairRequest(cb) {
+      pairListeners.add(cb);
+      return () => pairListeners.delete(cb);
     },
   };
 }

@@ -8,8 +8,14 @@ pub mod commands;
 pub mod core;
 pub mod dto;
 
+use crate::api::pairing::PairGate;
+use crate::api::server::{ApiHandle, DEFAULT_PORTS, OnPair, start_api};
 use crate::core::AppCore;
+use std::sync::Arc;
 use std::time::Duration;
+
+/// How long a pairing request waits for Allow or Deny.
+const PAIR_TIMEOUT: Duration = Duration::from_secs(60);
 use tauri::{Emitter, Manager, RunEvent};
 
 /// Keeps the log writer alive for the life of the app.
@@ -75,6 +81,9 @@ pub fn run() {
             commands::add_password,
             commands::remove_password,
             commands::order_passwords,
+            commands::pair_answer,
+            commands::paired_clients,
+            commands::remove_paired_client,
         ])
         .setup(|app| {
             if let Some(g) = app.path().app_log_dir().ok().and_then(|d| init_logging(&d)) {
@@ -104,6 +113,27 @@ pub fn run() {
             if let Err(e) = crate::clipboard::spawn_watcher(core.clone()) {
                 tracing::warn!(error = %e, "clipboard watcher not started");
             }
+            let gate = PairGate::new(PAIR_TIMEOUT);
+            let window = app.handle().clone();
+            let on_pair: OnPair = Arc::new(move |browser| {
+                if let Some(w) = window.get_webview_window("main") {
+                    let _ = w.unminimize();
+                    let _ = w.show();
+                    let _ = w.set_focus();
+                }
+                let _ = window.emit("haul:pair-request", serde_json::json!({ "browser": browser }));
+            });
+            let port_file = data_dir.join("api-port");
+            let (c, g) = (core.clone(), gate.clone());
+            match tauri::async_runtime::block_on(async move {
+                start_api(c, g, on_pair, DEFAULT_PORTS, Some(port_file)).await
+            }) {
+                Ok(api) => {
+                    app.manage(api);
+                }
+                Err(e) => tracing::warn!(error = %e, "local API not started; the browser extension can't reach Haul"),
+            }
+            app.manage(gate);
             app.manage(core);
             Ok(())
         })
@@ -111,6 +141,9 @@ pub fn run() {
         .expect("error while building Haul");
     app.run(|app, e| {
         if let RunEvent::Exit = e {
+            if let Some(api) = app.try_state::<ApiHandle>() {
+                api.stop();
+            }
             tracing::info!("Haul exiting: saving downloads");
             tauri::async_runtime::block_on(app.state::<AppCore>().shutdown());
         }

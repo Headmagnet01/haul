@@ -6,6 +6,7 @@
   import RulesView from './components/RulesView.svelte';
   import { createRulesState } from './lib/rules-state.svelte';
   import Toast from './components/Toast.svelte';
+  import PairDialog from './components/PairDialog.svelte';
   import Drawer from './components/Drawer.svelte';
   import StatusBar from './components/StatusBar.svelte';
   import { getBackend } from './lib/backend';
@@ -26,6 +27,9 @@
   $effect(() => {
     if (app.view === 'rules') void rules.load();
   });
+
+  // Bumped when a pairing is answered, so the Browsers list reloads.
+  let browsersRev = $state(0);
 
   const label = $derived(VIEWS.find((v) => v.id === app.view)?.label ?? '');
   const active = $derived(app.snapshot.downloads.filter((d) => d.state !== 'completed' && !app.hidden.has(d.id)).length);
@@ -72,12 +76,13 @@
   {:else if app.view === 'collector'}
     <CollectorView c={collector} />
   {:else if app.view === 'rules'}
-    <RulesView rs={rules} backend={app.backend} />
+    <RulesView rs={rules} backend={app.backend} {browsersRev} />
   {:else}
     <Placeholder title={label} />
   {/if}
   <StatusBar {app} {collector} />
 </div>
+<PairDialog backend={app.backend} onanswered={() => browsersRev++} />
 <Toast toast={app.toast} ondismiss={() => (app.toast = null)} />
 
 <style>

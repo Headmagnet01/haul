@@ -2,13 +2,14 @@
   import RuleEditor from './RuleEditor.svelte';
   import CategoryTable from './CategoryTable.svelte';
   import PasswordList from './PasswordList.svelte';
+  import BrowserList from './BrowserList.svelte';
   import type { Backend } from '../lib/backend';
   import type { RulesState } from '../lib/rules-state.svelte';
   import { blankRule, mbToBytes, ruleSummary } from '../lib/rules';
   import { errText } from '../lib/postproc';
   import type { PostProcSettings, Rule } from '../lib/types';
 
-  let { rs, backend }: { rs: RulesState; backend: Backend } = $props();
+  let { rs, backend, browsersRev = 0 }: { rs: RulesState; backend: Backend; browsersRev?: number } = $props();
 
   const SWITCHES: { key: keyof PostProcSettings; label: string }[] = [
     { key: 'auto', label: 'Process finished packages automatically' },
@@ -146,6 +147,11 @@
           onremove={(id) => rs.removePassword(id)}
           onmove={(i, by) => rs.movePassword(i, by)}
         />
+      </section>
+
+      <section aria-labelledby="h-browsers">
+        <h2 id="h-browsers">Browsers</h2>
+        <BrowserList {backend} rev={browsersRev} />
       </section>
     </div>
   {/if}

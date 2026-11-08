@@ -3,10 +3,11 @@
 //! Every command is async and runs its store work on a blocking thread, so a slow SQLite
 //! query (or the store lock held by a transfer saving segments) never freezes the window.
 
+use crate::api::pairing::PairGate;
 use crate::core::{AppCore, FolderTarget};
 use crate::dto::{
-    Category, CollectorFilters, CollectorSnapshot, Destination, IntakeResult, PostProcSettings, Rule, RulesConfig, Run,
-    Snapshot, SpeedLimit, StartResult,
+    Category, CollectorFilters, CollectorSnapshot, Destination, IntakeResult, PairedClientView, PostProcSettings, Rule,
+    RulesConfig, Run, Snapshot, SpeedLimit, StartResult,
 };
 use tauri::{AppHandle, State};
 use tauri_plugin_opener::OpenerExt;
@@ -197,4 +198,20 @@ pub async fn remove_password(core: State<'_, AppCore>, id: i64) -> R<()> {
 #[tauri::command]
 pub async fn order_passwords(core: State<'_, AppCore>, ids: Vec<i64>) -> R<()> {
     blocking(&core, move |c| c.order_passwords(&ids).map_err(|e| e.to_string())).await
+}
+
+/// The window's answer to the waiting pairing request.
+#[tauri::command]
+pub fn pair_answer(gate: State<'_, PairGate>, allow: bool) {
+    gate.answer(allow);
+}
+
+#[tauri::command]
+pub async fn paired_clients(core: State<'_, AppCore>) -> R<Vec<PairedClientView>> {
+    blocking(&core, |c| c.paired_clients().map_err(|e| e.to_string())).await
+}
+
+#[tauri::command]
+pub async fn remove_paired_client(core: State<'_, AppCore>, id: i64) -> R<()> {
+    blocking(&core, move |c| c.remove_paired_client(id).map_err(|e| e.to_string())).await
 }

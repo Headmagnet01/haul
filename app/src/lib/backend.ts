@@ -1,6 +1,6 @@
 import type {
   Category, CollectorFilters, CollectorSnapshot, Destination, IntakeResult, PostProcSettings, PriorityName, Rule,
-  RulesConfig, Run, Snapshot, Source, SpeedLimit, StartResult, Update,
+  PairedClient, RulesConfig, Run, Snapshot, Source, SpeedLimit, StartResult, Update,
 } from './types';
 import { createMockBackend } from './backend-mock';
 import { tauriBackend } from './backend-tauri';
@@ -43,6 +43,12 @@ export interface Backend {
   addPassword(password: string): Promise<number>;
   removePassword(id: number): Promise<void>;
   orderPasswords(ids: number[]): Promise<void>;
+  /** Answers the waiting pairing request from a browser extension. */
+  pairAnswer(allow: boolean): Promise<void>;
+  pairedClients(): Promise<PairedClient[]>;
+  removePairedClient(id: number): Promise<void>;
+  /** A browser extension asks to pair. Returns an unsubscribe function. */
+  onPairRequest(cb: (browser: string) => void): () => void;
   /** Returns an unsubscribe function. */
   onUpdate(cb: (u: Update) => void): () => void;
 }
@@ -58,6 +64,10 @@ export function getBackend(): Backend {
     const demo = new URLSearchParams(location.search).get('demo') === '1';
     const mock = createMockBackend({ tickMs: 250, demo });
     (window as unknown as { __haulMockCalls: string[] }).__haulMockCalls = mock.calls;
+    // e2e tests play the browser extension.
+    (window as unknown as { __haulMock: { pairRequest(b: string): void } }).__haulMock = {
+      pairRequest: (b) => mock.pairRequest(b),
+    };
     instance = mock;
   } else {
     instance = tauriBackend;

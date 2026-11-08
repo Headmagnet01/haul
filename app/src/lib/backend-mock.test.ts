@@ -138,3 +138,32 @@ test('mock_secret_needs_password', async () => {
   expect((await b.postprocRuns())[0].state).toBe('done');
   expect((await b.rulesConfig()).passwords).toHaveLength(1);
 });
+
+test('pair_request_then_allow_adds_client', async () => {
+  const b = createMockBackend({ tickMs: 250, demo: false });
+  const asked: string[] = [];
+  b.onPairRequest((browser) => asked.push(browser));
+  b.pairRequest('Microsoft Edge');
+  expect(asked).toEqual(['Microsoft Edge']);
+  await b.pairAnswer(true);
+  const list = await b.pairedClients();
+  expect(list).toHaveLength(1);
+  expect(list[0].browser).toBe('Microsoft Edge');
+  expect(list[0].lastSeen).toBeNull();
+});
+
+test('deny_adds_nothing', async () => {
+  const b = createMockBackend({ tickMs: 250, demo: false });
+  b.pairRequest('Google Chrome');
+  await b.pairAnswer(false);
+  expect(await b.pairedClients()).toEqual([]);
+});
+
+test('remove_paired_client_forgets', async () => {
+  const b = createMockBackend({ tickMs: 250, demo: false });
+  b.pairRequest('Google Chrome');
+  await b.pairAnswer(true);
+  const [c] = await b.pairedClients();
+  await b.removePairedClient(c.id);
+  expect(await b.pairedClients()).toEqual([]);
+});

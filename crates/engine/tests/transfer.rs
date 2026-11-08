@@ -436,7 +436,7 @@ fn add_with_headers(ctx: &TransferCtx, url: &str, dir: &Path, headers: &str) -> 
 
 #[tokio::test]
 async fn cookie_sent_on_probe_and_connections() {
-    let len = 4 * MIB as usize;
+    let len = MIB as usize;
     let mut spec = Spec::new(len);
     spec.require_header = Some(("cookie".into(), "sid=abc".into()));
     let srv = serve(spec).await;

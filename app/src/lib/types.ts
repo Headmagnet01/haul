@@ -195,3 +195,11 @@ export interface Destination {
   /** `Rule “<name>”`, a category name, or '' when nothing matched. */
   by: string;
 }
+
+/** A browser extension paired with Haul. */
+export interface PairedClient {
+  id: number;
+  browser: string;
+  createdAt: string;
+  lastSeen: string | null;
+}

@@ -3,6 +3,19 @@ import { listen } from '@tauri-apps/api/event';
 import type { Backend } from './backend';
 import type { Update } from './types';
 
+function subscribe<T>(event: string, cb: (payload: T) => void): () => void {
+  let off: (() => void) | null = null;
+  let cancelled = false;
+  listen<T>(event, (e) => cb(e.payload)).then((un) => {
+    if (cancelled) un();
+    else off = un;
+  });
+  return () => {
+    cancelled = true;
+    off?.();
+  };
+}
+
 /** Command names match app/src-tauri/src/commands.rs; argument names are camelCase. */
 export const tauriBackend: Backend = {
   snapshot: () => invoke('snapshot'),
@@ -35,16 +48,9 @@ export const tauriBackend: Backend = {
   addPassword: (password) => invoke('add_password', { password }),
   removePassword: (id) => invoke('remove_password', { id }),
   orderPasswords: (ids) => invoke('order_passwords', { ids }),
-  onUpdate(cb) {
-    let off: (() => void) | null = null;
-    let cancelled = false;
-    listen<Update>('haul:update', (e) => cb(e.payload)).then((un) => {
-      if (cancelled) un();
-      else off = un;
-    });
-    return () => {
-      cancelled = true;
-      off?.();
-    };
-  },
+  pairAnswer: (allow) => invoke('pair_answer', { allow }),
+  pairedClients: () => invoke('paired_clients'),
+  removePairedClient: (id) => invoke('remove_paired_client', { id }),
+  onUpdate: (cb) => subscribe<Update>('haul:update', cb),
+  onPairRequest: (cb) => subscribe<{ browser: string }>('haul:pair-request', (p) => cb(p.browser)),
 };
