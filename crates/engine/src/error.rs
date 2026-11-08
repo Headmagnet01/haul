@@ -53,3 +53,17 @@ impl From<reqwest::Error> for EngineError {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn network_error_hides_userinfo() {
+        // Nothing listens on port 1, so the connect fails with a URL in the message.
+        let e = crate::http_client().get("http://user:secret@127.0.0.1:1/f.bin").send().await.unwrap_err();
+        let text = EngineError::from(e).to_string();
+        assert!(text.contains("127.0.0.1:1/f.bin"), "{text}");
+        assert!(!text.contains("secret") && !text.contains("user:"), "{text}");
+    }
+}
