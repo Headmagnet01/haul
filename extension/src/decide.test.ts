@@ -42,7 +42,8 @@ test('skips_blob_and_data', () => {
 test('skips_non_http', () => {
   expect(d(f({ url: 'file:///C:/x.bin', finalUrl: 'file:///C:/x.bin' }))).toBe('skip');
   expect(d(f({ url: 'ftp://a.org/x.bin', finalUrl: 'ftp://a.org/x.bin' }))).toBe('skip');
-  expect(d(f({ finalUrl: '' }))).toBe('catch'); // falls back to url
+  // No final URL: the download wasn't a plain GET Haul can fetch again (spec 4.1).
+  expect(d(f({ finalUrl: '' }))).toBe('skip');
   expect(d(f({ url: '', finalUrl: '' }))).toBe('skip');
 });
 

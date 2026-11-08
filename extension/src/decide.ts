@@ -17,8 +17,9 @@ function isHttp(u: string): boolean {
 
 /** Whether Haul should take this download from the browser. */
 export function decide(f: DownloadFacts, opts: Options, altClicks: AltClick[], now: number): 'catch' | 'skip' {
-  const url = f.finalUrl || f.url;
-  // blob:, data:, file:, ftp: and form posts are things Haul can't fetch again by itself.
+  // No final URL means no plain GET (a form post); blob:, data:, file: and ftp: links are also things
+  // Haul can't fetch again by itself.
+  const url = f.finalUrl;
   if (f.incognito || !isHttp(url)) return 'skip';
   if (altClicks.some((a) => now - a.at <= ALT_WINDOW_MS && (a.url === f.url || a.url === f.finalUrl))) return 'skip';
   const ext = extOf(f.filename) || extOf(url);

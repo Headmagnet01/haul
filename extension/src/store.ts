@@ -1,4 +1,5 @@
 import type { SavedStore } from './api';
+import { pairStateNow } from './pairstate';
 import { DEFAULT_OPTIONS, type AltClick, type Options } from './types';
 
 /** What the popup shows about the last download it handled. */
@@ -36,10 +37,11 @@ export async function lastResult(): Promise<LastResult | null> {
 export const setLastResult = (text: string) => chrome.storage.local.set({ lastResult: { at: Date.now(), text } });
 
 export async function pairState(): Promise<PairState> {
-  return ((await chrome.storage.local.get('pairState')).pairState as PairState | undefined) ?? 'idle';
+  const v = await chrome.storage.local.get(['pairState', 'pairSince']);
+  return pairStateNow((v.pairState as PairState | undefined) ?? 'idle', v.pairSince as number | undefined, Date.now());
 }
 
-export const setPairState = (s: PairState) => chrome.storage.local.set({ pairState: s });
+export const setPairState = (s: PairState) => chrome.storage.local.set({ pairState: s, pairSince: Date.now() });
 
 /** Alt+clicks live in session storage, so a worker restarted between the click and the download still sees them. */
 export async function altClicks(): Promise<AltClick[]> {
