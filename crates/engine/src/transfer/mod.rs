@@ -474,20 +474,46 @@ fn kill_slow_connections(env: &Env, cfg: &TransferConfig, hist: &mut HashMap<u64
     }
 }
 
-fn emit_progress(env: &Env, size: Option<u64>, samples: &mut VecDeque<(Instant, u64)>) {
-    let now = Instant::now();
-    let rx = env.received.load(Relaxed);
+/// How far back the reported speed averages. Long enough that a line's normal dips don't jump around.
+pub const SPEED_WINDOW: Duration = Duration::from_secs(5);
+
+/// Records `(now, rx)` and returns the average bytes per second over the last `window`.
+fn windowed_speed(samples: &mut VecDeque<(Instant, u64)>, now: Instant, rx: u64, window: Duration) -> u64 {
     samples.push_back((now, rx));
-    while samples.len() > 2 && now.duration_since(samples[0].0) > Duration::from_secs(2) {
+    while samples.len() > 2 && now.duration_since(samples[0].0) > window {
         samples.pop_front();
     }
     let (t0, b0) = samples[0];
     let dt = now.duration_since(t0).as_secs_f64();
-    let speed_bps = if dt > 0.0 { ((rx - b0) as f64 / dt) as u64 } else { 0 };
+    if dt > 0.0 { (rx.saturating_sub(b0) as f64 / dt) as u64 } else { 0 }
+}
+
+fn emit_progress(env: &Env, size: Option<u64>, samples: &mut VecDeque<(Instant, u64)>) {
+    let rx = env.received.load(Relaxed);
+    let speed_bps = windowed_speed(samples, Instant::now(), rx, SPEED_WINDOW);
     let (written, segments) = {
         let t = env.table.lock().unwrap();
         let segs = t.ranges().iter().map(|r| (r.start, r.pos, r.end)).collect();
         (t.written(), segs)
     };
     env.events.send(Event::Progress { id: env.id, written, size, speed_bps, segments });
+}
+
+#[cfg(test)]
+mod speed_tests {
+    use super::*;
+
+    #[test]
+    fn speed_uses_five_second_window() {
+        let t0 = Instant::now();
+        let mut samples = VecDeque::new();
+        let mut speed = 0;
+        // 1 MB/s for 4 s, sampled every 250 ms, then nothing for 2 s.
+        for i in 0..=24u64 {
+            let rx = (i.min(16)) * 250_000;
+            speed = windowed_speed(&mut samples, t0 + Duration::from_millis(i * 250), rx, SPEED_WINDOW);
+        }
+        assert!(speed > 0, "a 2 s window would report 0 here");
+        assert_eq!(SPEED_WINDOW, Duration::from_secs(5));
+    }
 }

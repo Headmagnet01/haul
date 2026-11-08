@@ -43,7 +43,7 @@ impl Store {
         let mut c = self.lock();
         let tx = c.transaction()?;
         tx.execute(
-            "UPDATE downloads SET state = ?2, error = NULL, target_path = NULL WHERE id = ?1",
+            "UPDATE downloads SET state = ?2, error = NULL, target_path = NULL, finished_at = NULL WHERE id = ?1",
             params![id, DownloadState::Queued.as_str()],
         )?;
         tx.execute("DELETE FROM segments WHERE download_id = ?1", [id])?;
@@ -188,8 +188,8 @@ mod tests {
     }
 
     #[test]
-    fn schema_version_is_4() {
-        assert_eq!(Store::open_in_memory().unwrap().schema_version().unwrap(), 5);
+    fn schema_version_is_latest() {
+        assert_eq!(Store::open_in_memory().unwrap().schema_version().unwrap(), crate::store::SCHEMA_VERSION);
     }
 
     #[test]
@@ -212,7 +212,7 @@ mod tests {
             .unwrap();
         }
         let s = Store::open(&path).unwrap();
-        assert_eq!(s.schema_version().unwrap(), 5);
+        assert_eq!(s.schema_version().unwrap(), crate::store::SCHEMA_VERSION);
         let d = &s.list_downloads().unwrap()[0];
         assert_eq!(d.file_name.as_deref(), Some("a"));
         assert_eq!(d.verify_retries, 0);

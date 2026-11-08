@@ -14,7 +14,7 @@ pub use clients::PairedClient;
 pub use collector::{Batch, CollectorLink};
 pub use postproc::{RuleRowIn, RuleRowOut, RunRow};
 
-const SCHEMA_VERSION: i64 = 5;
+const SCHEMA_VERSION: i64 = 6;
 
 #[derive(Clone)]
 pub struct Store {
@@ -55,6 +55,8 @@ pub struct Download {
     pub expected_hash: Option<String>,
     /// The server's digest from the probe, as `"<algo>:<hex>"`.
     pub server_digest: Option<String>,
+    /// UTC, `YYYY-MM-DDTHH:MM:SSZ`; set on Completed, cleared on reset.
+    pub finished_at: Option<String>,
     /// How many times a checksum mismatch re-downloaded this file.
     pub verify_retries: u32,
 }
@@ -69,7 +71,7 @@ pub struct Package {
 
 const DOWNLOAD_COLS: &str = "id, package_id, url, headers_blob, state, priority, position, connections, \
     speed_limit, target_dir, file_name, target_path, error, final_url, size, etag, last_modified, \
-    resumable, probe_file_name, content_type, created_at, expected_hash, server_digest, verify_retries";
+    resumable, probe_file_name, content_type, created_at, expected_hash, server_digest, verify_retries, finished_at";
 
 fn row_to_download(r: &Row) -> rusqlite::Result<Download> {
     let final_url: Option<String> = r.get(13)?;
@@ -106,6 +108,7 @@ fn row_to_download(r: &Row) -> rusqlite::Result<Download> {
         expected_hash: r.get(21)?,
         server_digest: r.get(22)?,
         verify_retries: r.get::<_, i64>(23)? as u32,
+        finished_at: r.get(24)?,
     })
 }
 
@@ -152,6 +155,7 @@ impl Store {
             include_str!("migration_3.sql"),
             include_str!("migration_4.sql"),
             include_str!("migration_5.sql"),
+            include_str!("migration_6.sql"),
         ];
         for (i, sql) in migrations.iter().enumerate().skip(version.max(0) as usize) {
             let to = i + 1;
@@ -284,7 +288,8 @@ impl Store {
 
     pub fn set_completed(&self, id: DownloadId, path: &Path) -> Result<(), EngineError> {
         self.lock().execute(
-            "UPDATE downloads SET state = ?2, error = NULL, target_path = ?3, headers_blob = NULL WHERE id = ?1",
+            "UPDATE downloads SET state = ?2, error = NULL, target_path = ?3, headers_blob = NULL, \
+             finished_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?1",
             params![id, DownloadState::Completed.as_str(), path_str(path)],
         )?;
         Ok(())
@@ -583,8 +588,58 @@ mod tests {
     }
 
     #[test]
-    fn schema_version_is_5() {
-        assert_eq!(Store::open_in_memory().unwrap().schema_version().unwrap(), 5);
+    fn schema_version_is_6() {
+        assert_eq!(Store::open_in_memory().unwrap().schema_version().unwrap(), 6);
+    }
+
+    #[test]
+    fn completed_sets_finished_at() {
+        let s = Store::open_in_memory().unwrap();
+        let id = s.insert_download(&nd(Priority::Normal)).unwrap();
+        assert_eq!(s.get_download(id).unwrap().finished_at, None);
+        s.set_completed(id, std::path::Path::new("a.bin")).unwrap();
+        let f = s.get_download(id).unwrap().finished_at.expect("set");
+        assert!(chrono::DateTime::parse_from_rfc3339(&f).is_ok(), "{f}");
+    }
+
+    #[test]
+    fn reset_clears_finished_at() {
+        let s = Store::open_in_memory().unwrap();
+        let id = s.insert_download(&nd(Priority::Normal)).unwrap();
+        s.set_completed(id, std::path::Path::new("a.bin")).unwrap();
+        s.reset_download(id).unwrap();
+        assert_eq!(s.get_download(id).unwrap().finished_at, None);
+    }
+
+    #[test]
+    fn migration_6_keeps_old_rows() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("haul.db");
+        {
+            let c = Connection::open(&path).unwrap();
+            for (i, sql) in [
+                include_str!("schema.sql"),
+                include_str!("migration_2.sql"),
+                include_str!("migration_3.sql"),
+                include_str!("migration_4.sql"),
+                include_str!("migration_5.sql"),
+            ]
+            .iter()
+            .enumerate()
+            {
+                c.execute_batch(&format!("BEGIN; {sql} PRAGMA user_version = {}; COMMIT;", i + 1)).unwrap();
+            }
+            c.execute(
+                "INSERT INTO downloads (url, state, position, target_dir, target_path) VALUES ('https://a.org/x', 'completed', 0, 'dl', 'dl/x')",
+                [],
+            )
+            .unwrap();
+        }
+        let s = Store::open(&path).unwrap();
+        assert_eq!(s.schema_version().unwrap(), 6);
+        let d = &s.list_downloads().unwrap()[0];
+        assert_eq!(d.state, DownloadState::Completed);
+        assert_eq!(d.finished_at, None);
     }
 
     #[test]
