@@ -32,6 +32,24 @@
   $effect(() => {
     app.runs = post.runs;
   });
+  // First run: the welcome shows until the first link or download arrives (Haul records it).
+  let firstSeen = $state(true);
+  let checkingFirst = false;
+  async function checkFirst() {
+    if (checkingFirst) return;
+    checkingFirst = true;
+    try {
+      firstSeen = (await app.backend.settings()).firstDownloadSeen;
+    } catch {
+      /* keep the plain empty state */
+    } finally {
+      checkingFirst = false;
+    }
+  }
+  void checkFirst();
+  app.onUpdate(() => {
+    if (!firstSeen) void checkFirst();
+  });
   // A click on a notification shows a view.
   app.backend.onShowView((v) => {
     const found = VIEWS.find((x) => x.id === v);
@@ -115,7 +133,7 @@
     finishedCount={app.finishedCount}
   />
   {#if app.view === 'queue'}
-    <QueueView {app} {post} />
+    <QueueView {app} {post} {collector} firstRun={!firstSeen} />
     <Drawer {app} {post} />
   {:else if app.view === 'finished'}
     <FinishedView {app} />

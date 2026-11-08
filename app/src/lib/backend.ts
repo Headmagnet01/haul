@@ -76,6 +76,8 @@ export interface Backend {
   whenDoneNow(): Promise<void>;
   /** The mode or countdown changed (from the tray, the countdown, or a command). Returns an unsubscribe function. */
   onWhenDone(cb: (s: WhenDoneStatus) => void): () => void;
+  /** Opens the browser extension's folder in Explorer (for Load unpacked). */
+  openExtensionFolder(): Promise<void>;
   /** Haul asks the window to show a view (a click on a notification). Returns an unsubscribe function. */
   onShowView(cb: (view: string) => void): () => void;
   /** Returns an unsubscribe function. */

@@ -136,6 +136,7 @@ pub fn run() {
             commands::settings,
             commands::set_settings,
             commands::open_path,
+            commands::open_extension_folder,
             commands::postproc_runs,
             commands::postproc_process,
             commands::postproc_retry,

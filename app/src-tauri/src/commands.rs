@@ -147,6 +147,21 @@ pub async fn open_path(app: AppHandle, path: String) -> R<()> {
     app.opener().open_path(path, None::<&str>).map_err(|e| e.to_string())
 }
 
+/// Opens the browser extension's folder for Load unpacked: the bundled copy when installed,
+/// the repository's built `extension\dist` in a dev build.
+#[tauri::command]
+pub async fn open_extension_folder(app: AppHandle) -> R<()> {
+    use tauri::Manager;
+    let bundled = app.path().resource_dir().map(|d| d.join("extension")).ok().filter(|d| d.is_dir());
+    let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../extension/dist");
+    let dir = bundled
+        .or_else(|| (cfg!(debug_assertions) && source.is_dir()).then_some(source))
+        .ok_or("The extension folder wasn't found. Build it with npm run build in the extension folder.")?;
+    let dir = dir.canonicalize().unwrap_or(dir);
+    let shown = dir.to_string_lossy().trim_start_matches(r"\\?\").to_string();
+    app.opener().open_path(shown, None::<&str>).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub async fn postproc_runs(core: State<'_, AppCore>) -> R<Vec<Run>> {
     blocking(&core, |c| c.postproc_runs().map_err(|e| e.to_string())).await

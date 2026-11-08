@@ -292,7 +292,20 @@ impl AppCore {
         if links.is_empty() {
             return Ok(IntakeResult { added: 0, skipped: 0 });
         }
-        self.grabber.intake(links, source)
+        let r = self.grabber.intake(links, source)?;
+        self.note_first_download();
+        Ok(r)
+    }
+
+    /// Ends the first-run welcome for good: called when links or a download first arrive.
+    pub(crate) fn note_first_download(&self) {
+        if self.settings().first_download_seen {
+            return;
+        }
+        let patch = crate::settings::SettingsPatch { first_download_seen: Some(true), ..Default::default() };
+        if let Err(e) = self.set_settings(patch) {
+            tracing::warn!(error = %e, "first download not recorded");
+        }
     }
 
     fn collector_filters(&self) -> CollectorFilters {
@@ -665,6 +678,20 @@ mod tests {
         let c = core_fake(Store::open_in_memory().unwrap(), dir.path());
         assert!(c.add_links("https://a.org/x", "fax").is_err());
         assert!(c.collector_snapshot().unwrap().links.is_empty());
+    }
+
+    #[tokio::test]
+    async fn first_add_sets_first_download_seen() {
+        let dir = tempfile::tempdir().unwrap();
+        let c = core_fake(Store::open_in_memory().unwrap(), dir.path());
+        assert!(!c.settings().first_download_seen);
+        c.add_links("nothing here", "paste").unwrap();
+        assert!(!c.settings().first_download_seen, "no links, nothing seen");
+        c.add_links("https://a.org/1.bin", "paste").unwrap();
+        assert!(c.settings().first_download_seen);
+        let again = core_fake(Store::open(&dir.path().join("x.db")).unwrap(), dir.path());
+        again.add_browser_links(vec!["https://a.org/2.bin".into()], None).unwrap();
+        assert!(again.settings().first_download_seen, "browser links count too");
     }
 
     #[tokio::test]

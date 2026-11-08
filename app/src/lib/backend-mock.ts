@@ -353,7 +353,10 @@ export function createMockBackend(
   const fullSettings = (): Settings => ({ ...own, watchClipboard: collector.snapshot().watchClipboard, speedLimit: { ...limit } });
   const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, Math.round(n)));
 
-  if (opts.demo) seedDemo();
+  if (opts.demo) {
+    seedDemo();
+    own = { ...own, firstDownloadSeen: true };
+  }
   setInterval(tick, opts.tickMs);
 
   const rec = (name: string) => calls.push(name);
@@ -402,6 +405,10 @@ export function createMockBackend(
       rec('addLinks');
       const links = mockExtract(text);
       if (links.length === 0) return { added: 0, skipped: 0 };
+      if (!own.firstDownloadSeen) {
+        own = { ...own, firstDownloadSeen: true };
+        save(SETTINGS_KEY, own);
+      }
       return collector.intake(links, source);
     },
     async collectorSnapshot() {
@@ -634,6 +641,9 @@ export function createMockBackend(
     onPairClosed(cb) {
       pairClosedListeners.add(cb);
       return () => pairClosedListeners.delete(cb);
+    },
+    async openExtensionFolder() {
+      rec('openExtensionFolder');
     },
     onShowView(cb) {
       viewListeners.add(cb);

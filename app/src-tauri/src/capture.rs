@@ -38,6 +38,7 @@ impl AppCore {
         if self.settings().browser_start == crate::settings::BrowserStart::Collector {
             // The Collector keeps no headers, so a login-only link shows as Offline there.
             self.grabber.intake_labelled(vec![req.url.clone()], "browser", None)?;
+            self.note_first_download();
             tracing::info!(host = %host, cookies, "captured to the Collector");
             return Ok(0);
         }
@@ -75,6 +76,8 @@ impl AppCore {
             }
         };
         recent.insert(req.url, (id, Instant::now()));
+        drop(recent);
+        self.note_first_download();
         Ok(id)
     }
 
@@ -87,7 +90,9 @@ impl AppCore {
         if links.is_empty() {
             return Ok(IntakeResult { added: 0, skipped: 0 });
         }
-        self.grabber.intake_labelled(links, "browser", page_title)
+        let r = self.grabber.intake_labelled(links, "browser", page_title)?;
+        self.note_first_download();
+        Ok(r)
     }
 
     /// Pairs a browser extension: stores a hash of a fresh key bound to its origin, and returns the key.

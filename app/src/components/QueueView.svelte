@@ -4,12 +4,27 @@
   import ListRow from './ListRow.svelte';
   import AddLinks from './AddLinks.svelte';
   import EmptyState from './EmptyState.svelte';
+  import Welcome from './Welcome.svelte';
+  import type { CollectorState } from '../lib/collector-state.svelte';
   import type { AppState } from '../lib/app-state.svelte';
   import type { PostprocState } from '../lib/postproc-state.svelte';
   import { keyAction, type Action } from '../lib/keys';
   import type { ListItem } from '../lib/model';
 
-  let { app, post, onaction }: { app: AppState; post?: PostprocState; onaction?: (a: Action) => boolean } = $props();
+  let {
+    app,
+    post,
+    onaction,
+    collector,
+    firstRun = false,
+  }: {
+    app: AppState;
+    post?: PostprocState;
+    onaction?: (a: Action) => boolean;
+    /** With `firstRun`, the empty Queue shows the welcome. */
+    collector?: CollectorState;
+    firstRun?: boolean;
+  } = $props();
   const runOf = (it: ListItem) =>
     !post ? null : it.kind === 'package' ? post.byPackage(it.pkg.id) : it.d.packageId === null ? post.byDownload(it.d.id) : null;
 
@@ -153,7 +168,7 @@
   {/if}
 
   {#if app.loaded && app.snapshot.downloads.length === 0}
-    <EmptyState />
+    {#if firstRun && collector}<Welcome {app} {collector} />{:else}<EmptyState />{/if}
   {:else}
     <div class="grid" role="treegrid" aria-label="Downloads" aria-multiselectable="false">
       <div class="cols" role="row">
