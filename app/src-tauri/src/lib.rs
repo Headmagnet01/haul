@@ -112,6 +112,34 @@ fn repair_autostart(core: &AppCore, identifier: &str) {
     }
 }
 
+/// Where the log goes, once setup knows it: the startup-failure box names it.
+static LOG_DIR: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+
+/// The text of the box shown when Haul can't start.
+fn startup_failure_text(reason: &str, log_dir: Option<&std::path::Path>) -> String {
+    match log_dir {
+        Some(d) => format!("Haul couldn't start: {reason}. The log is in {}.", d.display()),
+        None => format!("Haul couldn't start: {reason}."),
+    }
+}
+
+/// Logs the reason, shows it in a Windows message box, and exits: never a silent panic.
+fn fail_to_start(reason: &str) -> ! {
+    tracing::error!(%reason, "Haul couldn't start");
+    let text = startup_failure_text(reason.trim_end_matches('.'), LOG_DIR.get().map(|p| p.as_path()));
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::UI::WindowsAndMessaging::{MB_ICONERROR, MB_OK, MessageBoxW};
+        let wide = |s: &str| s.encode_utf16().chain(std::iter::once(0)).collect::<Vec<u16>>();
+        let (t, c) = (wide(&text), wide("Haul"));
+        // SAFETY: both strings are NUL-terminated and outlive the call; no owner window.
+        unsafe { MessageBoxW(std::ptr::null_mut(), t.as_ptr(), c.as_ptr(), MB_OK | MB_ICONERROR) };
+    }
+    #[cfg(not(windows))]
+    eprintln!("{text}");
+    std::process::exit(1)
+}
+
 pub fn run() {
     let app = tauri::Builder::default()
         // First, so a second launch hands over before anything else starts.
@@ -188,8 +216,11 @@ pub fn run() {
             }
         })
         .setup(|app| {
-            if let Some(g) = app.path().app_log_dir().ok().and_then(|d| init_logging(&d)) {
-                app.manage(g);
+            if let Ok(d) = app.path().app_log_dir() {
+                let _ = LOG_DIR.set(d.clone());
+                if let Some(g) = init_logging(&d) {
+                    app.manage(g);
+                }
             }
             let data_dir = app.path().app_data_dir()?;
             let download_dir =
@@ -259,7 +290,7 @@ pub fn run() {
             Ok(())
         })
         .build(tauri::generate_context!())
-        .expect("error while building Haul");
+        .unwrap_or_else(|e| fail_to_start(&e.to_string()));
     app.run(|app, e| {
         if let RunEvent::Exit = e {
             if let Some(api) = app.try_state::<ApiHandle>() {
@@ -269,4 +300,18 @@ pub fn run() {
             tauri::async_runtime::block_on(app.state::<AppCore>().shutdown());
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn startup_failure_text_names_reason_and_log() {
+        assert_eq!(
+            startup_failure_text("database is locked", Some(std::path::Path::new(r"C:\L"))),
+            r"Haul couldn't start: database is locked. The log is in C:\L."
+        );
+        assert_eq!(startup_failure_text("boom", None), "Haul couldn't start: boom.");
+    }
 }
