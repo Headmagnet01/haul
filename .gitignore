@@ -10,6 +10,8 @@ build/
 # Extension builds
 extension/dist/
 extension/dist-firefox/
+extension/firefox/.signed/
+extension/firefox/haul-firefox.version
 *.xpi
 *.zip
 # Local

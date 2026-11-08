@@ -69,6 +69,20 @@ fn bundle_is_per_user_nsis() {
     assert_eq!(b["resources"]["resources/7zip/*"], "7zip/");
 }
 
+/// The signed Firefox add-on's folder ships as `firefox/`; it always exists, signed or not.
+#[test]
+fn bundled_firefox_folder() {
+    assert_eq!(base()["bundle"]["resources"]["../../extension/firefox/"], "firefox/");
+    let readme = concat!(env!("CARGO_MANIFEST_DIR"), "/../../extension/firefox/README.txt");
+    assert!(std::path::Path::new(readme).is_file(), "extension/firefox/README.txt is committed");
+}
+
+/// Bundling refuses a missing or stale signed add-on.
+#[test]
+fn before_bundle_checks_firefox() {
+    assert_eq!(base()["build"]["beforeBundleCommand"], "node ../extension/check-release.mjs");
+}
+
 /// Every file `extension/dist/manifest.json` names, and every local file its pages load.
 #[test]
 fn bundled_extension_has_every_manifest_file() {

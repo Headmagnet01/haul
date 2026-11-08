@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "node build.mjs",
+    "sign:firefox": "node sign.mjs",
     "test": "vitest run",
     "check": "tsc --noEmit"
   },
@@ -12,6 +13,7 @@
     "@types/chrome": "^0.3.7",
     "esbuild": "^0.28.2",
     "typescript": "^5.9.3",
-    "vitest": "^5.1.0"
+    "vitest": "^5.1.0",
+    "web-ext": "^8.10.0"
   }
 }

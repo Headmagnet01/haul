@@ -8,7 +8,8 @@
     "devUrl": "http://localhost:5173",
     "frontendDist": "../dist",
     "beforeDevCommand": "npm run dev",
-    "beforeBuildCommand": "npm --prefix ../extension run build && npm run build"
+    "beforeBuildCommand": "npm --prefix ../extension run build && npm run build",
+    "beforeBundleCommand": "node ../extension/check-release.mjs"
   },
   "app": {
     "windows": [
@@ -45,6 +46,7 @@
     "resources": {
       "resources/7zip/*": "7zip/",
       "../../extension/dist/": "extension/",
+      "../../extension/firefox/": "firefox/",
       "../../LICENSE-MIT": "LICENSE-MIT",
       "../../LICENSE-APACHE": "LICENSE-APACHE"
     },
