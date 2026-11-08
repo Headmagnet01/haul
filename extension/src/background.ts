@@ -1,6 +1,8 @@
 // The service worker: catches downloads, runs the right-click menu and talks to Haul.
 import { makeClient } from './api';
-import { decide } from './decide';
+import { browserName, type RuntimeLike } from './browser';
+import { cookieHeader, type CookieApi, type CookieSource } from './cookies';
+import { decide, factsFromItem } from './decide';
 import { handOver } from './handover';
 import { realFetcher } from './net';
 import { WORDS, addAltClick, altClicks, loadOptions, saved, setLastResult, setPairState } from './store';
@@ -11,35 +13,29 @@ const haul = makeClient(realFetcher, saved);
 // Alt+clicks also kept in memory: the click's message can land a moment before the download starts.
 const recentAlt: { url: string; at: number }[] = [];
 
-function browserName(): string {
-  const brands = (navigator as Navigator & { userAgentData?: { brands: { brand: string }[] } }).userAgentData?.brands ?? [];
-  if (brands.some((b) => b.brand === 'Microsoft Edge')) return 'Microsoft Edge';
-  if (brands.some((b) => b.brand === 'Google Chrome')) return 'Google Chrome';
-  return 'Chromium';
-}
-
-async function cookieHeader(url: string): Promise<string | undefined> {
-  try {
-    const all = await chrome.cookies.getAll({ url });
-    return all.length ? all.map((c) => `${c.name}=${c.value}`).join('; ') : undefined;
-  } catch {
-    return undefined;
-  }
-}
+// Firefox-only fields that @types/chrome doesn't know.
+type FirefoxExtras = { cookieStoreId?: string };
+const cookiesApi = chrome.cookies as unknown as CookieApi;
+const runtime = chrome.runtime as unknown as RuntimeLike;
 
 function baseName(path: string): string | undefined {
   const n = path.split(/[\\/]/).pop();
   return n || undefined;
 }
 
-async function captureBody(url: string, referrer: string | undefined, filename?: string, size?: number): Promise<CaptureBody> {
+async function captureBody(
+  url: string,
+  src: CookieSource,
+  filename?: string,
+  size?: number,
+): Promise<CaptureBody> {
   return {
     url,
     filename,
     size,
-    referrer: referrer || undefined,
+    referrer: src.referrer || undefined,
     user_agent: navigator.userAgent,
-    cookies: await cookieHeader(url),
+    cookies: await cookieHeader(cookiesApi, url, src),
   };
 }
 
@@ -52,12 +48,11 @@ const downloadsApi = {
 
 chrome.downloads.onCreated.addListener(async (item) => {
   if (item.state !== 'in_progress') return;
-  const size = item.fileSize > 0 ? item.fileSize : item.totalBytes > 0 ? item.totalBytes : null;
-  const facts = { url: item.url, finalUrl: item.finalUrl, filename: item.filename, size, incognito: item.incognito };
+  const facts = factsFromItem(item);
   const alt = [...recentAlt, ...(await altClicks())];
   if (decide(facts, await loadOptions(), alt, Date.now()) !== 'catch') return;
-  const url = item.finalUrl || item.url;
-  const body = await captureBody(url, item.referrer, baseName(item.filename), size ?? undefined);
+  const src = { cookieStoreId: (item as FirefoxExtras).cookieStoreId, referrer: item.referrer };
+  const body = await captureBody(facts.finalUrl, src, baseName(item.filename), facts.size ?? undefined);
   await handOver(item.id, body, downloadsApi, {
     capture: async (b) => {
       const out = await haul.capture(b);
@@ -91,7 +86,8 @@ function collectLinks(): { links: string[]; title: string } {
 
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   if (info.menuItemId === 'haul-link' && info.linkUrl) {
-    const out = await haul.capture(await captureBody(info.linkUrl, info.pageUrl ?? tab?.url));
+    const src = { cookieStoreId: (tab as FirefoxExtras | undefined)?.cookieStoreId, referrer: info.pageUrl ?? tab?.url };
+    const out = await haul.capture(await captureBody(info.linkUrl, src));
     const text = out === 'ok' ? WORDS.sent : out === 'unpaired' ? WORDS.unpaired : "Haul didn't answer. Is it running?";
     await setLastResult(text);
     if (out !== 'ok') notify(text);
@@ -129,7 +125,7 @@ chrome.runtime.onMessage.addListener((msg: Msg, _sender, reply) => {
       // The popup closes when Haul's window takes focus; the worker waits for the answer.
       void (async () => {
         await setPairState('waiting');
-        const r = await haul.pair(browserName());
+        const r = await haul.pair(await browserName(runtime, navigator));
         await setPairState(r);
       })();
       reply({ ok: true });

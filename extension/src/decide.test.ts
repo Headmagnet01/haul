@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest';
-import { decide, extOf } from './decide';
+import { decide, extOf, factsFromItem } from './decide';
 import { DEFAULT_OPTIONS, type DownloadFacts } from './types';
 
 const MIB = 1048576;
@@ -64,4 +64,27 @@ test('ext_from_finalurl_when_filename_empty', () => {
 test('size_threshold_inclusive', () => {
   expect(d(f({ size: MIB }))).toBe('catch');
   expect(d(f({ size: MIB - 1 }))).toBe('skip');
+});
+
+test('firefox_item_without_final_url_uses_url', () => {
+  const facts = factsFromItem({ url: 'https://a.org/x.zip', filename: '', fileSize: -1, totalBytes: 5_000_000, incognito: false });
+  expect(facts.finalUrl).toBe('https://a.org/x.zip');
+  expect(facts.size).toBe(5_000_000);
+  expect(d(facts)).toBe('catch');
+});
+
+test('chrome_item_keeps_final_url', () => {
+  const facts = factsFromItem({
+    url: 'https://a.org/dl',
+    finalUrl: 'https://cdn.a.org/x.zip',
+    filename: 'C:\\dl\\x.zip',
+    fileSize: 2 * MIB,
+    totalBytes: 0,
+    incognito: true,
+  });
+  expect(facts).toEqual({ url: 'https://a.org/dl', finalUrl: 'https://cdn.a.org/x.zip', filename: 'C:\\dl\\x.zip', size: 2 * MIB, incognito: true });
+});
+
+test('item_without_any_size_is_null', () => {
+  expect(factsFromItem({ url: 'https://a.org/x', filename: '', fileSize: 0, totalBytes: 0, incognito: false }).size).toBeNull();
 });

@@ -11,6 +11,22 @@ export function extOf(name: string): string {
   return dot > 0 ? base.slice(dot + 1).toLowerCase() : '';
 }
 
+/** The parts of a browser `DownloadItem` the catch rule reads. Firefox has no `finalUrl`. */
+export interface ItemLike {
+  url: string;
+  finalUrl?: string;
+  filename: string;
+  fileSize: number;
+  totalBytes: number;
+  incognito: boolean;
+}
+
+/** Firefox reports one `url`, already after redirects, so it stands in for the final URL. */
+export function factsFromItem(item: ItemLike): DownloadFacts {
+  const size = item.fileSize > 0 ? item.fileSize : item.totalBytes > 0 ? item.totalBytes : null;
+  return { url: item.url, finalUrl: item.finalUrl || item.url, filename: item.filename, size, incognito: item.incognito };
+}
+
 function isHttp(u: string): boolean {
   return /^https?:\/\//i.test(u);
 }
