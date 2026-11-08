@@ -18,6 +18,9 @@ pub const KEY_AUTOSTART: &str = "autostart";
 pub const KEY_NOTIFY_FINISHED: &str = "notify_finished";
 pub const KEY_TRAY_HINT_SHOWN: &str = "tray_hint_shown";
 pub const KEY_FIRST_DOWNLOAD_SEEN: &str = "first_download_seen";
+pub const KEY_CHECK_UPDATES: &str = "check_updates";
+/// Internal: when the update check last ran (UTC, RFC 3339). Not part of `Settings`.
+pub const KEY_LAST_UPDATE_CHECK: &str = "last_update_check";
 
 pub const MAX_PARALLEL: (usize, usize) = (1, 20);
 pub const CONNECTIONS: (u32, u32) = (1, 16);
@@ -46,6 +49,7 @@ pub struct Settings {
     pub notify_finished: bool,
     pub tray_hint_shown: bool,
     pub first_download_seen: bool,
+    pub check_updates: bool,
 }
 
 /// The fields a save changes; `None` leaves a field alone. For `schedule`,
@@ -66,6 +70,7 @@ pub struct SettingsPatch {
     pub notify_finished: Option<bool>,
     pub tray_hint_shown: Option<bool>,
     pub first_download_seen: Option<bool>,
+    pub check_updates: Option<bool>,
 }
 
 /// A field that is present, even as `null`, is `Some(..)`.
@@ -93,6 +98,7 @@ impl Settings {
             notify_finished: get(store, KEY_NOTIFY_FINISHED).unwrap_or(true),
             tray_hint_shown: get(store, KEY_TRAY_HINT_SHOWN).unwrap_or(false),
             first_download_seen: get(store, KEY_FIRST_DOWNLOAD_SEEN).unwrap_or(has_downloads),
+            check_updates: get(store, KEY_CHECK_UPDATES).unwrap_or(true),
         }
     }
 
@@ -115,6 +121,7 @@ impl Settings {
         set(&mut self.notify_finished, &p.notify_finished);
         set(&mut self.tray_hint_shown, &p.tray_hint_shown);
         set(&mut self.first_download_seen, &p.first_download_seen);
+        set(&mut self.check_updates, &p.check_updates);
     }
 
     /// Saves the fields `p` sets, with the values this record now holds.
@@ -159,6 +166,9 @@ impl Settings {
         }
         if p.first_download_seen.is_some() {
             put(store, KEY_FIRST_DOWNLOAD_SEEN, &s.first_download_seen)?;
+        }
+        if p.check_updates.is_some() {
+            put(store, KEY_CHECK_UPDATES, &s.check_updates)?;
         }
         Ok(())
     }
@@ -216,6 +226,18 @@ mod tests {
         assert!(s.schedule.is_none());
         assert!(s.close_to_tray && !s.autostart && s.notify_finished);
         assert!(!s.tray_hint_shown && !s.first_download_seen);
+    }
+
+    #[test]
+    fn check_updates_defaults_on_and_saves() {
+        let store = Store::open_in_memory().unwrap();
+        let mut s = Settings::load(&store, PathBuf::from("d"), false);
+        assert!(s.check_updates);
+        let p: SettingsPatch = serde_json::from_str(r#"{"checkUpdates": false}"#).unwrap();
+        s.apply(&p);
+        s.save(&store, &p).unwrap();
+        assert!(!Settings::load(&store, PathBuf::from("d"), false).check_updates);
+        assert_eq!(store.get_setting(KEY_CHECK_UPDATES).unwrap(), Some(serde_json::json!(false)));
     }
 
     #[test]

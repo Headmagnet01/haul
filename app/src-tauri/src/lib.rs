@@ -11,6 +11,7 @@ pub mod dto;
 pub mod settings;
 pub mod toast;
 pub mod tray;
+pub mod update;
 pub mod when_done;
 
 use crate::api::pairing::PairGate;
@@ -173,6 +174,9 @@ pub fn run() {
             commands::pair_answer,
             commands::paired_clients,
             commands::remove_paired_client,
+            commands::update_status,
+            commands::check_updates_now,
+            commands::open_release,
         ])
         .on_window_event(|w, e| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = e {
@@ -250,6 +254,8 @@ pub fn run() {
             }
             spawn_when_done(app.handle().clone(), core.clone());
             repair_autostart(&core);
+            app.manage(crate::update::Updater::new(crate::update::FEED, env!("CARGO_PKG_VERSION")));
+            crate::update::spawn_loop(app.handle().clone(), core.clone());
             app.manage(gate);
             app.manage(core);
             let args: Vec<String> = std::env::args().collect();

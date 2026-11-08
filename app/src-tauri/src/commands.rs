@@ -163,6 +163,35 @@ pub async fn open_extension_folder(app: AppHandle) -> R<()> {
 }
 
 #[tauri::command]
+pub async fn update_status(updater: State<'_, crate::update::Updater>) -> R<crate::update::UpdateStatus> {
+    Ok(updater.status())
+}
+
+/// Checks GitHub now, whatever the switch says, and saves the time.
+#[tauri::command]
+pub async fn check_updates_now(
+    app: AppHandle,
+    core: State<'_, AppCore>,
+    updater: State<'_, crate::update::Updater>,
+) -> R<crate::update::UpdateStatus> {
+    use tauri::Emitter;
+    let s = updater.check_now(&crate::update::client(), &core.store).await;
+    if let Some(ev) = crate::update::available(&s) {
+        let _ = app.emit("haul:update-available", ev);
+    }
+    Ok(s)
+}
+
+/// Opens a Haul release page in the default browser. Any other address is refused.
+#[tauri::command]
+pub async fn open_release(app: AppHandle, url: String) -> R<()> {
+    if crate::update::safe_release_url(Some(&url)) != url {
+        return Err("That isn't a Haul release page.".into());
+    }
+    app.opener().open_url(url, None::<&str>).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub async fn postproc_runs(core: State<'_, AppCore>) -> R<Vec<Run>> {
     blocking(&core, |c| c.postproc_runs().map_err(|e| e.to_string())).await
 }
