@@ -31,6 +31,15 @@ function isHttp(u: string): boolean {
   return /^https?:\/\//i.test(u);
 }
 
+/** Whether the unknown size is all that keeps this download from being caught, so it is worth waiting for. */
+export function needsSize(f: DownloadFacts, opts: Options, altClicks: AltClick[], now: number): boolean {
+  return (
+    f.size === null &&
+    decide(f, opts, altClicks, now) === 'skip' &&
+    decide({ ...f, size: Number.MAX_SAFE_INTEGER }, opts, altClicks, now) === 'catch'
+  );
+}
+
 /** Whether Haul should take this download from the browser. */
 export function decide(f: DownloadFacts, opts: Options, altClicks: AltClick[], now: number): 'catch' | 'skip' {
   // No final URL means no plain GET (a form post); blob:, data:, file: and ftp: links are also things

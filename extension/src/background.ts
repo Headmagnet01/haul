@@ -2,7 +2,8 @@
 import { makeClient } from './api';
 import { browserName, type RuntimeLike } from './browser';
 import { cookieHeader, type CookieApi, type CookieSource } from './cookies';
-import { decide, factsFromItem } from './decide';
+import { decide, factsFromItem, needsSize } from './decide';
+import { SIZE_TRIES, waitForSize } from './size';
 import { handOver } from './handover';
 import { realFetcher } from './net';
 import { WORDS, addAltClick, altClicks, loadOptions, saved, setLastResult, setPairState } from './store';
@@ -48,9 +49,15 @@ const downloadsApi = {
 
 chrome.downloads.onCreated.addListener(async (item) => {
   if (item.state !== 'in_progress') return;
-  const facts = factsFromItem(item);
+  let facts = factsFromItem(item);
   const alt = [...recentAlt, ...(await altClicks())];
-  if (decide(facts, await loadOptions(), alt, Date.now()) !== 'catch') return;
+  const opts = await loadOptions();
+  if (needsSize(facts, opts, alt, Date.now())) {
+    const read = async () => (await chrome.downloads.search({ id: item.id }))[0];
+    const sleep = (ms: number) => new Promise<void>((ok) => setTimeout(ok, ms));
+    facts = { ...facts, size: await waitForSize(read, SIZE_TRIES, sleep) };
+  }
+  if (decide(facts, opts, alt, Date.now()) !== 'catch') return;
   const src = { cookieStoreId: (item as FirefoxExtras).cookieStoreId, referrer: item.referrer };
   const body = await captureBody(facts.finalUrl, src, baseName(item.filename), facts.size ?? undefined);
   await handOver(item.id, body, downloadsApi, {

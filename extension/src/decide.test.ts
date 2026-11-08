@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest';
-import { decide, extOf, factsFromItem } from './decide';
+import { decide, extOf, factsFromItem, needsSize } from './decide';
 import { DEFAULT_OPTIONS, type DownloadFacts } from './types';
 
 const MIB = 1048576;
@@ -83,6 +83,18 @@ test('chrome_item_keeps_final_url', () => {
     incognito: true,
   });
   expect(facts).toEqual({ url: 'https://a.org/dl', finalUrl: 'https://cdn.a.org/x.zip', filename: 'C:\\dl\\x.zip', size: 2 * MIB, incognito: true });
+});
+
+// Firefox fires onCreated before it knows the size (totalBytes -1), so the size is waited for
+// exactly when it is the only thing deciding.
+test('needs_size_when_only_size_decides', () => {
+  const ns = (facts: DownloadFacts, alt: { url: string; at: number }[] = []) => needsSize(facts, DEFAULT_OPTIONS, alt, NOW);
+  expect(ns(f({ size: null }))).toBe(true);
+  expect(ns(f({ size: 2 * MIB }))).toBe(false);
+  expect(ns(f({ size: null, filename: 'C:\\dl\\a.zip' }))).toBe(false); // listed type: caught anyway
+  expect(ns(f({ size: null, incognito: true }))).toBe(false);
+  expect(ns(f({ size: null, finalUrl: 'blob:https://a.org/x' }))).toBe(false);
+  expect(ns(f({ size: null }), [{ url: 'https://a.org/file.bin', at: NOW - 100 }])).toBe(false); // Alt-click
 });
 
 test('item_without_any_size_is_null', () => {
