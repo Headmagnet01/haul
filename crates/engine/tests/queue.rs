@@ -261,6 +261,67 @@ async fn schedule_pauses_running_and_resumes() {
     q.shutdown().await;
 }
 
+fn never_window() -> haul_engine::Schedule {
+    haul_engine::Schedule {
+        start: chrono::NaiveTime::from_hms_opt(0, 0, 0).unwrap(),
+        stop: chrono::NaiveTime::from_hms_opt(0, 0, 0).unwrap(),
+        weekdays: vec![],
+    }
+}
+
+/// A download the user paused by hand stays paused when the window opens; one nobody touched restarts.
+#[tokio::test]
+async fn hand_pause_beats_schedule() {
+    let srv = slow_server(20_000_000, 2_000_000).await;
+    let dir = tempfile::tempdir().unwrap();
+    let c = ctx_on(Store::open_in_memory().unwrap(), TransferConfig::for_tests());
+    let q = Queue::start(c.clone(), 3);
+    let a = q.add(nd(&srv.url, dir.path(), Priority::Normal)).unwrap();
+    let b = q.add(nd(&srv.url, dir.path(), Priority::Normal)).unwrap();
+    wait_state(&c.store, a, DownloadState::Running, 5).await;
+    wait_state(&c.store, b, DownloadState::Running, 5).await;
+    q.set_schedule(Some(never_window()));
+    wait_state(&c.store, a, DownloadState::Paused, 5).await;
+    wait_state(&c.store, b, DownloadState::Paused, 5).await;
+    q.resume(a);
+    wait_state(&c.store, a, DownloadState::Queued, 5).await;
+    q.pause(a);
+    wait_state(&c.store, a, DownloadState::Paused, 5).await;
+    q.set_schedule(None);
+    wait_state(&c.store, b, DownloadState::Running, 5).await;
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    assert_eq!(c.store.get_download(a).unwrap().state, DownloadState::Paused, "the hand pause wins");
+    q.shutdown().await;
+}
+
+/// Removing a download the schedule paused leaves nothing for the window to restart.
+#[tokio::test]
+async fn hand_remove_forgets_auto_pause() {
+    let srv = slow_server(20_000_000, 2_000_000).await;
+    let dir = tempfile::tempdir().unwrap();
+    let c = ctx_on(Store::open_in_memory().unwrap(), TransferConfig::for_tests());
+    let q = Queue::start(c.clone(), 3);
+    let a = q.add(nd(&srv.url, dir.path(), Priority::Normal)).unwrap();
+    wait_state(&c.store, a, DownloadState::Running, 5).await;
+    q.set_schedule(Some(never_window()));
+    wait_state(&c.store, a, DownloadState::Paused, 5).await;
+    let mut events = c.events.subscribe();
+    q.remove(a);
+    q.set_schedule(None);
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    let mut removed = false;
+    while let Ok(ev) = events.try_recv() {
+        match ev {
+            haul_engine::Event::Removed { id } if id == a => removed = true,
+            haul_engine::Event::StateChanged { id, .. } if id == a => panic!("{a:?} changed state after its removal"),
+            _ => {}
+        }
+    }
+    assert!(removed);
+    assert!(c.store.get_download(a).is_err(), "the row is gone");
+    q.shutdown().await;
+}
+
 #[tokio::test]
 async fn set_max_parallel_clamps() {
     let c = ctx_on(Store::open_in_memory().unwrap(), TransferConfig::for_tests());

@@ -92,7 +92,15 @@ impl Queue {
         Ok(id)
     }
 
+    /// A hand pause, resume or remove takes the download off the schedule's restart list: the
+    /// window then restarts only what it paused itself and nobody touched since. The lock is
+    /// released at once, never held while `running` is locked (the dispatcher takes them the other way).
+    fn forget_auto_pause(&self, id: DownloadId) {
+        self.inner.auto_paused.lock().unwrap().remove(&id);
+    }
+
     pub fn pause(&self, id: DownloadId) {
+        self.forget_auto_pause(id);
         // Held throughout, so the dispatcher can't start this row between the check and the write.
         let running = self.inner.running.lock().unwrap();
         if let Some(r) = running.get(&id) {
@@ -108,6 +116,7 @@ impl Queue {
 
     /// Puts a paused or failed download back in the queue.
     pub fn resume(&self, id: DownloadId) {
+        self.forget_auto_pause(id);
         if self.inner.running.lock().unwrap().contains_key(&id) {
             return;
         }
@@ -121,6 +130,7 @@ impl Queue {
 
     /// Stops it if running, then deletes the row and its part file. Finished files are never touched.
     pub fn remove(&self, id: DownloadId) {
+        self.forget_auto_pause(id);
         {
             // Held throughout, like `pause`, so a row being removed is never started.
             let mut running = self.inner.running.lock().unwrap();

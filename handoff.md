@@ -297,7 +297,7 @@ Each line says what it costs if the decision is wrong.
 - **`AllDone` fires too often:** it also fires when the user pauses every download, so plan 6 ("when done") must check states before acting on it.
 - **Stalls under a speed limit:** the stall rule (no bytes for `slow_window` → reconnect) is off while a speed limit is set, so a stall there still waits for the 30 s read timeout.
 - **Crash during finish:** a crash between the final rename and `set_completed` re-downloads the file as `name (1)`. Fix: store `target_path` before the rename and check it on recovery.
-- **Schedule vs. manual pause:** when a schedule window opens, it re-queues every download it auto-paused, even one the user has since decided to keep paused. This needs an owner decision. It was raised with them and is still open; settle it with the schedule settings in plan 6.
+- **Schedule vs. manual pause: settled in plan 7 (owner, 9 Nov).** Your own action wins: pause, resume or remove takes a download off the schedule's restart list, so the window restarts only what it paused and nobody touched (`Queue::forget_auto_pause`; test `hand_pause_beats_schedule`).
 
 ## Plan 1 post-review fixes (5 Nov 2026)
 `/code-review` (high) ran on the branch. Fixed, each with a test that failed first except the 429 race:
