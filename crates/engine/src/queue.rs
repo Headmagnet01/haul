@@ -184,6 +184,11 @@ impl Queue {
         self.inner.wake.notify_one();
     }
 
+    /// True once `shutdown` has begun: nothing new starts.
+    pub fn is_stopped(&self) -> bool {
+        self.inner.stop.is_cancelled()
+    }
+
     /// Pauses everything, saves, and stops the dispatcher. Used on app exit.
     pub async fn shutdown(&self) {
         self.inner.stop.cancel();

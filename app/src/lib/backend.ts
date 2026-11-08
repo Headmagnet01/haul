@@ -1,6 +1,7 @@
 import type {
   Category, CollectorFilters, CollectorSnapshot, Destination, IntakeResult, PostProcSettings, PriorityName, Rule,
-  PairedClient, RulesConfig, Run, Settings, SettingsPatch, Snapshot, Source, StartResult, Update,
+  PairedClient, RulesConfig, Run, Settings, SettingsPatch, Snapshot, Source, StartResult, Update, WhenDoneMode,
+  WhenDoneStatus,
 } from './types';
 import { createMockBackend } from './backend-mock';
 import { tauriBackend } from './backend-tauri';
@@ -66,6 +67,15 @@ export interface Backend {
   onPairRequest(cb: (n: number, browser: string) => void): () => void;
   /** Request `n` ended (answered, timed out, or the browser went away). Returns an unsubscribe function. */
   onPairClosed(cb: (n: number) => void): () => void;
+  /** "When done" is never saved: it starts as Nothing. */
+  whenDone(): Promise<WhenDoneStatus>;
+  setWhenDone(mode: WhenDoneMode): Promise<WhenDoneStatus>;
+  /** Cancel on the countdown: back to Nothing. */
+  whenDoneCancel(): Promise<WhenDoneStatus>;
+  /** Do it now on the countdown. */
+  whenDoneNow(): Promise<void>;
+  /** The mode or countdown changed (from the tray, the countdown, or a command). Returns an unsubscribe function. */
+  onWhenDone(cb: (s: WhenDoneStatus) => void): () => void;
   /** Returns an unsubscribe function. */
   onUpdate(cb: (u: Update) => void): () => void;
 }
@@ -82,9 +92,10 @@ export function getBackend(): Backend {
     const mock = createMockBackend({ tickMs: 250, demo });
     (window as unknown as { __haulMockCalls: string[] }).__haulMockCalls = mock.calls;
     // e2e tests play the browser extension.
-    (window as unknown as { __haulMock: { pairRequest(b: string): number; pairTimeout(): void } }).__haulMock = {
-      pairRequest: (b) => mock.pairRequest(b),
+    (window as unknown as { __haulMock: object }).__haulMock = {
+      pairRequest: (b: string) => mock.pairRequest(b),
       pairTimeout: () => mock.pairTimeout(),
+      queueDrained: () => mock.queueDrained(),
     };
     instance = mock;
   } else {

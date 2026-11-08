@@ -1,11 +1,13 @@
 <script lang="ts">
   import Sparkline from './Sparkline.svelte';
   import Icon from './Icon.svelte';
+  import WhenDoneSelect from './WhenDoneSelect.svelte';
+  import type { WhenDoneState } from '../lib/when-done-state.svelte';
   import type { AppState } from '../lib/app-state.svelte';
   import type { CollectorState } from '../lib/collector-state.svelte';
   import { formatSpeed } from '../lib/format';
 
-  let { app, collector }: { app: AppState; collector: CollectorState } = $props();
+  let { app, collector, wd }: { app: AppState; collector: CollectorState; wd?: WhenDoneState } = $props();
   const limit = $derived(app.snapshot.speedLimit);
   const limitText = $derived(formatSpeed(limit.bps).replace(/\.0 /, ' '));
 </script>
@@ -36,6 +38,10 @@
   >
     <span class="sw" aria-hidden="true"></span>Watch clipboard
   </button>
+  {#if wd}
+    <span class="sep" aria-hidden="true"></span>
+    <WhenDoneSelect {wd} />
+  {/if}
 </footer>
 
 <style>

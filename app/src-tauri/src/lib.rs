@@ -9,6 +9,7 @@ pub mod core;
 pub mod dto;
 pub mod settings;
 pub mod tray;
+pub mod when_done;
 
 use crate::api::pairing::PairGate;
 use crate::api::server::{ApiHandle, DEFAULT_PORTS, OnPair, PairEvent, start_api};
@@ -62,6 +63,44 @@ fn seven_zip_path(app: &tauri::App) -> std::path::PathBuf {
     bundled
 }
 
+/// Decides "when done" once a second (and arms it as downloads start); shows the window when
+/// the countdown starts and publishes every change to the UI and the tray.
+fn spawn_when_done(app: tauri::AppHandle, core: AppCore) {
+    use crate::when_done::Step;
+    use haul_engine::{DownloadState, Event};
+    use tokio::sync::broadcast::error::RecvError;
+    let mut rx = core.events().subscribe();
+    tauri::async_runtime::spawn(async move {
+        let mut tick = tokio::time::interval(Duration::from_secs(1));
+        let mut last = core.when_done_status();
+        loop {
+            tokio::select! {
+                ev = rx.recv() => match ev {
+                    Ok(Event::StateChanged { state: DownloadState::Running, .. }) => core.when_done_started(),
+                    Ok(_) | Err(RecvError::Lagged(_)) => {}
+                    Err(RecvError::Closed) => break,
+                },
+                _ = tick.tick() => match core.when_done_step() {
+                    Step::Nothing => {}
+                    Step::Started => crate::tray::show_main(&app),
+                    Step::Fire(mode) => {
+                        crate::tray::publish_when_done(&app, core.when_done_status());
+                        tracing::info!(?mode, "when done: carrying out");
+                        if let Err(e) = core.carry_out(mode).await {
+                            tracing::warn!(error = %e, "when done failed");
+                        }
+                    }
+                },
+            }
+            let s = core.when_done_status();
+            if s != last {
+                crate::tray::publish_when_done(&app, s);
+                last = s;
+            }
+        }
+    });
+}
+
 pub fn run() {
     let app = tauri::Builder::default()
         // First, so a second launch hands over before anything else starts.
@@ -87,6 +126,10 @@ pub fn run() {
             commands::files_exist,
             commands::delete_files,
             commands::download_again,
+            commands::when_done,
+            commands::set_when_done,
+            commands::when_done_cancel,
+            commands::when_done_now,
             commands::collector_snapshot,
             commands::collector_start,
             commands::collector_remove,
@@ -185,6 +228,7 @@ pub fn run() {
             if let Err(e) = crate::tray::build_tray(app.handle(), &core) {
                 tracing::warn!(error = %e, "tray icon not created");
             }
+            spawn_when_done(app.handle().clone(), core.clone());
             app.manage(gate);
             app.manage(core);
             let args: Vec<String> = std::env::args().collect();

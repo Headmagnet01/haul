@@ -258,3 +258,34 @@ pub async fn delete_files(core: State<'_, AppCore>, ids: Vec<i64>) -> R<()> {
 pub async fn download_again(core: State<'_, AppCore>, id: i64) -> R<i64> {
     blocking(&core, move |c| c.download_again(id).map_err(|e| e.to_string())).await
 }
+
+#[tauri::command]
+pub fn when_done(core: State<'_, AppCore>) -> crate::when_done::Status {
+    core.when_done_status()
+}
+
+#[tauri::command]
+pub fn set_when_done(
+    app: AppHandle,
+    core: State<'_, AppCore>,
+    mode: crate::when_done::Mode,
+) -> crate::when_done::Status {
+    let s = core.set_when_done(mode);
+    crate::tray::publish_when_done(&app, s);
+    s
+}
+
+#[tauri::command]
+pub fn when_done_cancel(app: AppHandle, core: State<'_, AppCore>) -> crate::when_done::Status {
+    let s = core.when_done_cancel();
+    crate::tray::publish_when_done(&app, s);
+    s
+}
+
+/// Do it now on the countdown.
+#[tauri::command]
+pub async fn when_done_now(app: AppHandle, core: State<'_, AppCore>) -> R<()> {
+    let c = core.inner().clone();
+    crate::tray::publish_when_done(&app, crate::when_done::Status::default());
+    c.when_done_now().await.map_err(|e| e.to_string())
+}

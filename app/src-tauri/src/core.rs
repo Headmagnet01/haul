@@ -5,6 +5,7 @@ use crate::dto::{
     PostProcSettings, Rule, RulesConfig, Run, Snapshot, SpeedLimit, StartResult,
 };
 use crate::settings::{Settings, SettingsPatch};
+use crate::when_done::{Idle, Mode, PowerAction, Status, WhenDone, WindowsPower};
 use haul_engine::postproc::extract::SevenZip;
 use haul_engine::postproc::scan::Defender;
 use haul_engine::postproc::sort::{RecycleBin, Recycler};
@@ -39,6 +40,9 @@ pub struct AppCore {
     postproc: PostProc,
     /// Finished view's Delete file…; the same Recycle Bin post-processing uses.
     recycler: Arc<dyn Recycler>,
+    /// "When done": never saved, so every start is Nothing.
+    when_done: Arc<Mutex<WhenDone>>,
+    power: Arc<dyn PowerAction>,
     /// Browser captures in the last few seconds, by URL: (download id, when).
     pub(crate) recent: Arc<Mutex<HashMap<String, (i64, Instant)>>>,
 }
@@ -178,6 +182,8 @@ impl AppCore {
             settings: Arc::new(RwLock::new(settings)),
             postproc,
             recycler,
+            when_done: Arc::default(),
+            power: Arc::new(WindowsPower),
             recent: Arc::default(),
         }
     }
@@ -420,6 +426,81 @@ impl AppCore {
             connections: self.connections(),
             speed_limit: None,
         })
+    }
+
+    fn wd(&self) -> std::sync::MutexGuard<'_, WhenDone> {
+        self.when_done.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    pub fn when_done_status(&self) -> Status {
+        self.wd().status(Instant::now())
+    }
+
+    pub fn set_when_done(&self, mode: Mode) -> Status {
+        let mut w = self.wd();
+        w.set_mode(mode);
+        w.status(Instant::now())
+    }
+
+    /// Cancel on the countdown: back to Nothing.
+    pub fn when_done_cancel(&self) -> Status {
+        let mut w = self.wd();
+        w.cancel();
+        w.status(Instant::now())
+    }
+
+    /// A download started: arms the chosen mode and stops a running countdown.
+    pub fn when_done_started(&self) {
+        self.wd().on_started();
+    }
+
+    /// One decision step with what the queue is doing now.
+    pub fn when_done_step(&self) -> crate::when_done::Step {
+        let idle = self.idle();
+        self.wd().step(&idle, Instant::now())
+    }
+
+    /// Do it now (or the countdown ran out): carries out the chosen mode once.
+    pub async fn when_done_now(&self) -> std::io::Result<()> {
+        let mode = self.wd().take();
+        match mode {
+            Some(m) => self.carry_out(m).await,
+            None => Ok(()),
+        }
+    }
+
+    /// Sleep keeps Haul running; Shut down saves and stops downloads first.
+    pub async fn carry_out(&self, mode: Mode) -> std::io::Result<()> {
+        match mode {
+            Mode::Nothing => Ok(()),
+            Mode::Sleep => self.power.sleep(),
+            Mode::Shutdown => {
+                self.shutdown().await;
+                self.power.shutdown()
+            }
+        }
+    }
+
+    /// What the queue and post-processing are doing, for "when done".
+    pub fn idle(&self) -> Idle {
+        let ds = self.store.list_downloads().unwrap_or_default();
+        let runs = self.store.list_runs().unwrap_or_default();
+        let schedule = self.settings.read().unwrap_or_else(|e| e.into_inner()).schedule.clone();
+        let closed = schedule.is_some_and(|s| !haul_engine::is_within_window(chrono::Local::now().naive_local(), &s));
+        Idle {
+            running_or_queued: ds
+                .iter()
+                .filter(|d| matches!(d.state, DownloadState::Queued | DownloadState::Running))
+                .count(),
+            postproc_busy: runs.iter().any(|r| matches!(r.state.as_str(), "queued" | "running" | "waiting")),
+            postproc_waiting_on_user: runs.iter().any(|r| r.state == "needs_password"),
+            held_by_schedule: closed && ds.iter().any(|d| d.state == DownloadState::Paused),
+        }
+    }
+
+    #[cfg(test)]
+    fn with_power(self, power: Arc<dyn PowerAction>) -> AppCore {
+        AppCore { power, ..self }
     }
 
     #[cfg(test)]
@@ -1040,5 +1121,68 @@ mod tests {
         assert_eq!(d.target_dir, other);
         assert_eq!(d.state, DownloadState::Queued);
         assert_eq!(c.store.get_download(id).unwrap().state, DownloadState::Completed);
+    }
+
+    /// Records each power call instead of making it.
+    #[derive(Default)]
+    struct FakePower {
+        calls: Mutex<Vec<&'static str>>,
+    }
+
+    impl crate::when_done::PowerAction for FakePower {
+        fn sleep(&self) -> std::io::Result<()> {
+            self.calls.lock().unwrap().push("sleep");
+            Ok(())
+        }
+        fn shutdown(&self) -> std::io::Result<()> {
+            self.calls.lock().unwrap().push("shutdown");
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn when_done_resets_on_start() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open_in_memory().unwrap();
+        haul_engine::schedule::set_when_done(&store, haul_engine::WhenDone::Shutdown).unwrap();
+        let c = core(store, dir.path());
+        assert_eq!(c.when_done_status().mode, crate::when_done::Mode::Nothing);
+    }
+
+    #[tokio::test]
+    async fn do_it_now_calls_power_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let power = Arc::new(FakePower::default());
+        let c = core(Store::open_in_memory().unwrap(), dir.path()).with_power(power.clone());
+        c.set_when_done(crate::when_done::Mode::Shutdown);
+        c.when_done_now().await.unwrap();
+        c.when_done_now().await.unwrap();
+        assert_eq!(*power.calls.lock().unwrap(), vec!["shutdown"]);
+        assert_eq!(c.when_done_status().mode, crate::when_done::Mode::Nothing);
+        // The shutdown path ran first: the queue no longer starts downloads.
+        assert!(c.queue.is_stopped());
+    }
+
+    #[tokio::test]
+    async fn sleep_keeps_haul_running() {
+        let dir = tempfile::tempdir().unwrap();
+        let power = Arc::new(FakePower::default());
+        let c = core(Store::open_in_memory().unwrap(), dir.path()).with_power(power.clone());
+        c.set_when_done(crate::when_done::Mode::Sleep);
+        c.when_done_now().await.unwrap();
+        assert_eq!(*power.calls.lock().unwrap(), vec!["sleep"]);
+        assert!(!c.queue.is_stopped());
+    }
+
+    #[tokio::test]
+    async fn idle_counts_queue_and_runs() {
+        let dir = tempfile::tempdir().unwrap();
+        let c = core(Store::open_in_memory().unwrap(), dir.path());
+        assert_eq!(c.idle(), crate::when_done::Idle::default());
+        queue_one(&c);
+        assert_eq!(c.idle().running_or_queued, 1);
+        let id = c.store.list_downloads().unwrap()[0].id;
+        c.store.set_state(id, DownloadState::Failed, Some("boom")).unwrap();
+        assert_eq!(c.idle().running_or_queued, 0);
     }
 }

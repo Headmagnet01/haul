@@ -3,6 +3,7 @@
 import type { Backend } from './backend';
 import type {
   DownloadView, PackageView, PairedClient, PriorityName, Seg, Settings, SettingsPatch, Snapshot, SpeedLimit, State, Update,
+  WhenDoneStatus,
 } from './types';
 import { createMockCollector } from './backend-mock-collector';
 import { createMockPostproc } from './backend-mock-postproc';
@@ -115,7 +116,7 @@ function splitEven(size: number, n: number): Seg[] {
 
 export function createMockBackend(
   opts: { tickMs: number; demo: boolean; checkMs?: number },
-): Backend & { calls: string[]; pairRequest(browser: string): number; pairTimeout(): void } {
+): Backend & { calls: string[]; pairRequest(browser: string): number; pairTimeout(): void; queueDrained(): void } {
   const calls: string[] = [];
   // Pairing: one waiting request at a time, like the app.
   let pairing: { n: number; browser: string } | null = null;
@@ -141,6 +142,16 @@ export function createMockBackend(
   let limit = readLimit();
   // Like the engine: a running row is removed only after its transfer stops (one tick later).
   const removing = new Set<number>();
+  // "When done": the countdown ticks once a second, like the app.
+  let wd: WhenDoneStatus = { mode: 'nothing', countdown: null };
+  let wdTimer: ReturnType<typeof setInterval> | undefined;
+  const wdListeners = new Set<(s: WhenDoneStatus) => void>();
+  const wdSet = (s: WhenDoneStatus) => {
+    wd = s;
+    if (s.countdown === null) clearInterval(wdTimer);
+    wdListeners.forEach((cb) => cb({ ...wd }));
+    return { ...wd };
+  };
   // Finished files deleted outside Haul (the demo seeds one).
   const missing = new Set<number>();
   const tickS = opts.tickMs / 1000;
@@ -556,6 +567,36 @@ export function createMockBackend(
     orderPasswords(ids) {
       rec('orderPasswords');
       return call(() => postproc.orderPasswords(ids));
+    },
+    async whenDone() {
+      rec('whenDone');
+      return { ...wd };
+    },
+    async setWhenDone(mode) {
+      rec('setWhenDone');
+      return wdSet({ mode, countdown: null });
+    },
+    async whenDoneCancel() {
+      rec('whenDoneCancel');
+      return wdSet({ mode: 'nothing', countdown: null });
+    },
+    async whenDoneNow() {
+      rec('whenDoneNow');
+      wdSet({ mode: 'nothing', countdown: null });
+    },
+    onWhenDone(cb) {
+      wdListeners.add(cb);
+      return () => wdListeners.delete(cb);
+    },
+    /** e2e: the queue and post-processing went idle after work ran. */
+    queueDrained() {
+      if (wd.mode === 'nothing' || wd.countdown !== null) return;
+      wdSet({ mode: wd.mode, countdown: 60 });
+      wdTimer = setInterval(() => {
+        const left = (wd.countdown ?? 1) - 1;
+        if (left > 0) wdSet({ mode: wd.mode, countdown: left });
+        else wdSet({ mode: 'nothing', countdown: null });
+      }, 1000);
     },
     onUpdate(cb) {
       listeners.add(cb);

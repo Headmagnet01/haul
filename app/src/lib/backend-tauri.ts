@@ -2,7 +2,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { open } from '@tauri-apps/plugin-dialog';
 import type { Backend } from './backend';
-import type { Update } from './types';
+import type { Update, WhenDoneStatus } from './types';
 
 function subscribe<T>(event: string, cb: (payload: T) => void): () => void {
   let off: (() => void) | null = null;
@@ -62,6 +62,11 @@ export const tauriBackend: Backend = {
   pairAnswer: (n, allow) => invoke('pair_answer', { n, allow }),
   pairedClients: () => invoke('paired_clients'),
   removePairedClient: (id) => invoke('remove_paired_client', { id }),
+  whenDone: () => invoke('when_done'),
+  setWhenDone: (mode) => invoke('set_when_done', { mode }),
+  whenDoneCancel: () => invoke('when_done_cancel'),
+  whenDoneNow: () => invoke('when_done_now'),
+  onWhenDone: (cb) => subscribe<WhenDoneStatus>('haul:when-done', cb),
   onUpdate: (cb) => subscribe<Update>('haul:update', cb),
   onPairRequest: (cb) => subscribe<{ n: number; browser: string }>('haul:pair-request', (p) => cb(p.n, p.browser)),
   onPairClosed: (cb) => subscribe<{ n: number }>('haul:pair-closed', (p) => cb(p.n)),

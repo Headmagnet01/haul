@@ -113,9 +113,9 @@ pub fn build_tray(app: &tauri::AppHandle, core: &crate::core::AppCore) -> tauri:
     let limit_on = core.settings().speed_limit.enabled;
     let limit = CheckMenuItem::with_id(app, "speed_limit", "Speed limit", true, limit_on, none)?;
     let wd = [
-        CheckMenuItem::with_id(app, "wd_nothing", "Nothing", false, true, none)?,
-        CheckMenuItem::with_id(app, "wd_sleep", "Sleep", false, false, none)?,
-        CheckMenuItem::with_id(app, "wd_shutdown", "Shut down", false, false, none)?,
+        CheckMenuItem::with_id(app, "wd_nothing", "Nothing", true, true, none)?,
+        CheckMenuItem::with_id(app, "wd_sleep", "Sleep", true, false, none)?,
+        CheckMenuItem::with_id(app, "wd_shutdown", "Shut down", true, false, none)?,
     ];
     let when = Submenu::with_items(app, "When done", true, &[&wd[0], &wd[1], &wd[2]])?;
     let menu = Menu::with_items(
@@ -153,6 +153,15 @@ pub fn build_tray(app: &tauri::AppHandle, core: &crate::core::AppCore) -> tauri:
                     }
                     sync_limit(app, l.enabled);
                     let _ = app.emit("haul:update", crate::dto::Update { resync: true, ..Default::default() });
+                }
+                id @ ("wd_nothing" | "wd_sleep" | "wd_shutdown") => {
+                    use crate::when_done::Mode;
+                    let mode = match id {
+                        "wd_sleep" => Mode::Sleep,
+                        "wd_shutdown" => Mode::Shutdown,
+                        _ => Mode::Nothing,
+                    };
+                    publish_when_done(app, core.set_when_done(mode));
                 }
                 "quit" => app.exit(0),
                 _ => {}
@@ -208,6 +217,18 @@ pub fn sync_limit(app: &tauri::AppHandle, on: bool) {
     if let Some(m) = app.try_state::<TrayMenu>() {
         let _ = m.limit.set_checked(on);
     }
+}
+
+/// Ticks the tray's When done radio items and tells the UI (`haul:when-done`).
+pub fn publish_when_done(app: &tauri::AppHandle, s: crate::when_done::Status) {
+    use crate::when_done::Mode;
+    use tauri::{Emitter, Manager};
+    if let Some(m) = app.try_state::<TrayMenu>() {
+        for (item, mode) in m.when_done.iter().zip([Mode::Nothing, Mode::Sleep, Mode::Shutdown]) {
+            let _ = item.set_checked(s.mode == mode);
+        }
+    }
+    let _ = app.emit("haul:when-done", s);
 }
 
 #[cfg(test)]

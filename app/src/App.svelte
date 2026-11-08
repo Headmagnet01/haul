@@ -6,6 +6,8 @@
   import FinishedView from './components/FinishedView.svelte';
   import FinishedDrawer from './components/FinishedDrawer.svelte';
   import DeleteDialog from './components/DeleteDialog.svelte';
+  import CountdownDialog from './components/CountdownDialog.svelte';
+  import { createWhenDoneState } from './lib/when-done-state.svelte';
   import CollectorView from './components/CollectorView.svelte';
   import RulesView from './components/RulesView.svelte';
   import SettingsView from './components/SettingsView.svelte';
@@ -33,6 +35,7 @@
   void app.load();
   void collector.load();
   void post.load();
+  const wd = createWhenDoneState(app.backend, { showToast: (t) => app.showToast(t) });
   const rules = createRulesState(app.backend, { showToast: (t) => app.showToast(t) });
   $effect(() => {
     if (app.view === 'rules') void rules.load();
@@ -121,9 +124,10 @@
   {:else}
     <Placeholder title={label} />
   {/if}
-  <StatusBar {app} {collector} />
+  <StatusBar {app} {collector} {wd} />
 </div>
 <DeleteDialog {app} />
+<CountdownDialog {wd} />
 <PairDialog backend={app.backend} onanswered={() => browsersRev++} />
 <Toast toast={app.toast} ondismiss={() => (app.toast = null)} />
 

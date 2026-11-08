@@ -232,5 +232,13 @@ export interface Settings {
   firstDownloadSeen: boolean;
 }
 
+export type WhenDoneMode = 'nothing' | 'sleep' | 'shutdown';
+
+/** The `haul:when-done` payload. `countdown` is the seconds left, or null when not counting. */
+export interface WhenDoneStatus {
+  mode: WhenDoneMode;
+  countdown: number | null;
+}
+
 /** Only the fields that change; `schedule: null` turns the schedule off. */
 export type SettingsPatch = Partial<Settings>;
