@@ -469,3 +469,22 @@ async fn invalid_header_values_are_dropped() {
     let p = completed(run(&c, id).await);
     assert_file_eq(&p, 100_000);
 }
+
+#[tokio::test]
+async fn missing_download_folder_says_so() {
+    let srv = serve(Spec::new(100_000)).await;
+    let dir = tempfile::tempdir().unwrap();
+    // A folder that can never be made: its parent is a file (like a removed drive's letter).
+    let blocker = dir.path().join("not-a-folder");
+    std::fs::write(&blocker, b"x").unwrap();
+    let target = blocker.join("Downloads");
+    let c = ctx(16, TransferConfig::for_tests());
+    let id = add(&c, &srv.url, &target, 2, None);
+    match run(&c, id).await {
+        TransferOutcome::Failed(e) => assert_eq!(
+            e.to_string(),
+            format!("Download folder {} isn't available. Change it in Settings.", target.display())
+        ),
+        other => panic!("expected Failed, got {other:?}"),
+    }
+}

@@ -201,6 +201,12 @@ fn fingerprint_mismatch(old: &ProbeInfo, new: &ProbeInfo) -> Option<&'static str
     }
 }
 
+/// A download folder Haul can't make or write in (a removed drive, a read-only folder).
+fn folder_unavailable(dir: &Path, e: std::io::Error) -> EngineError {
+    tracing::warn!(dir = %dir.display(), error = %e, "download folder unavailable");
+    EngineError::Invalid(format!("Download folder {} isn't available. Change it in Settings.", dir.display()))
+}
+
 /// Returns Ok(Some(path)) when complete, Ok(None) when paused.
 async fn transfer(job: &TransferJob, ctx: &TransferCtx) -> Result<Option<PathBuf>, EngineError> {
     let id = job.id;
@@ -224,7 +230,7 @@ async fn transfer(job: &TransferJob, ctx: &TransferCtx) -> Result<Option<PathBuf
                 fresh.file_name.clone()
             }
         };
-        std::fs::create_dir_all(&d.target_dir)?;
+        std::fs::create_dir_all(&d.target_dir).map_err(|e| folder_unavailable(&d.target_dir, e))?;
         let part = part_path(&d.target_dir, &name, id);
         let size = fresh.size;
         let resumable = fresh.resumable && size.is_some() && !force_sequential;
@@ -264,7 +270,13 @@ async fn transfer(job: &TransferJob, ctx: &TransferCtx) -> Result<Option<PathBuf
             return Err(EngineError::DiskFull);
         }
 
-        let file = std::fs::OpenOptions::new().read(true).write(true).create(true).truncate(!resume).open(&part)?;
+        let file =
+            std::fs::OpenOptions::new().read(true).write(true).create(true).truncate(!resume).open(&part).map_err(
+                |e| match e.kind() {
+                    std::io::ErrorKind::PermissionDenied => folder_unavailable(&d.target_dir, e),
+                    _ => EngineError::Io(e),
+                },
+            )?;
         if let Some(s) = size {
             file.set_len(s).map_err(io_error)?;
         }
