@@ -1,6 +1,6 @@
 # Haul: handoff
 
-Last updated: 6 Nov 2026. Plans 1–4 are merged into `master`. Plan 4 (post-processing + Rules) merged at `b43c7cc` on the owner's go-ahead, after a full green rerun on `master`.
+Last updated: 8 Nov 2026. Plans 1–4 are merged into `master`. Plan 5 (local API, pairing, browser extension) is built on branch `feat/browser-extension`, reviewed, and **not merged**: it waits for the owner's hand check in Edge and go-ahead.
 
 ## What Haul is
 A free, open-source Windows download manager. It pairs IDM's fast engine and browser capture with JDownloader 2's link collector, packages and auto-extraction, in a calm "dispatch board" interface.
@@ -12,12 +12,12 @@ A free, open-source Windows download manager. It pairs IDM's fast engine and bro
 ## Where things stand
 | | |
 |---|---|
-| Branch | `master`. Plan 4 merged at `b43c7cc` (plan 3 at `d4208c5`). No Git remote exists. Cut a new branch for plan 5. |
-| Done | Plans 1–4, all merged. Plan 4: `docs/superpowers/plans/2026-11-06-haul-plan-4-post-processing.md`, Tasks 1–10, design in `docs/superpowers/specs/2026-11-06-haul-post-processing-design.md`. |
-| Tests | Rust: 254 tests (engine + app). Front end: 72 Vitest unit tests and 51 Playwright e2e tests, run in both light and dark (102 runs), plus 4 real-app smoke tests (all green on 6 Nov, after the plan-4 fixes). Clippy, rustfmt and svelte-check are clean. |
-| Real-app check | `npm run smoke` (6 Nov): a pasted link goes through the Collector (checked Online, started), then pause at 30%+, resume and complete with a matching SHA-256; removing a running download leaves no ghost; a link copied with `Set-Clipboard` while Watch clipboard is on reaches the Collector marked Clipboard. Graceful window close was not re-checked in this run: the app ran on a desktop the tools could not send window messages to (plan 2 checked it). |
-| Post-review check (6 Nov) | Every check rerun after the review fixes and green: 162 Rust tests, clippy, rustfmt, 57 Vitest, svelte-check, 78 e2e runs and all 3 real-app smoke tests. The owner closed the real app by hand (X) and the log says "Haul exiting: saving downloads". The dev DB is at schema 3, and its `download_dir` setting points at `_tmp/smoke`. |
-| Next | Plan 5: local API, pairing and the browser extension (spec section 6). Plan 4's final review was a self-review; a fresh whole-branch review (e.g. `/code-review`) is still open if wanted. |
+| Branch | `feat/browser-extension` (13 commits on `master` at `41cb998`). No Git remote exists. |
+| Done | Plans 1–4 merged. Plan 5 built: `docs/superpowers/plans/2026-11-08-haul-plan-5-browser-extension.md`, Tasks 1–10, design in `docs/superpowers/specs/2026-11-08-haul-browser-extension-design.md`. |
+| Tests (8 Nov) | Rust: 310 tests (one known timing flake, see below). Front end: 78 Vitest, 56 Playwright e2e tests in light and dark (112 runs). Extension: 32 Vitest. Clippy, rustfmt, svelte-check and the extension's `tsc` are clean. Real-app smoke 3/4: the clipboard test can't run `Set-Clipboard` in a sandboxed session (it passed on 6 Nov). |
+| Real browser (8 Nov) | `app/e2e-real/extension.spec.ts` loaded the extension into Edge, found Haul, paired through the real Allow dialog. It found a real bug (status must be a POST, below). The click → Haul steps could not run: Edge started from the sandboxed session never completes a download, even with no extension and no Playwright attached. |
+| Review | A fresh reviewer (8 Nov): no Critical; 3 Important, all fixed test-first (stale pairing dialog, no-final-URL downloads, a stuck Pair button). Minors deferred, listed in the Plan 5 section. |
+| Next | 1. The owner's hand check in Edge (below). 2. Merge on the owner's go-ahead. 3. Plan 6: settings, tray, first run, "when done", the Finished view, packaging. |
 
 ## The app, and how to run it
 - **Real app:** `cd app` and `npx tauri dev`. The window is titled Haul, 1280×800 by default.
@@ -40,6 +40,54 @@ A free, open-source Windows download manager. It pairs IDM's fast engine and bro
     - `commands.rs` and `lib.rs`: Tauri glue.
   - `src/lib/`: pure TypeScript, unit-tested: format, status, strip, model (list building, updates, moves and drops), speeds, keys and sparkline. It also holds `backend*.ts` (the interface, Tauri and the mock) and `app-state.svelte.ts` (all Queue state).
   - `src/components/`: the Svelte views.
+
+## Plan 5: local API, pairing and the browser extension (8 Nov 2026)
+- **What happens:**
+  - Haul runs a small server on `127.0.0.1:17654` (the next free port up to 17664 if busy; the port is written to `%APPDATA%\dev.haul.desktop\api-port`).
+  - The Chrome/Edge extension in `extension/` pairs once (Allow/Deny in Haul's window), then hands clicked downloads to Haul, which start at once. "Download all links…" sends a page's links to the Collector, marked Browser.
+  - If Haul is closed, not paired, or doesn't answer within 1.5 s, the browser keeps the download. The browser's copy is cancelled only after Haul said yes.
+- **Owner decisions:** Chrome and Edge only (Firefox later); a clicked download starts at once; approach A (local HTTP server).
+- **Where the code is:**
+  - Engine: migration 5 (`downloads.headers_blob`, `paired_clients`), `store/clients.rs`; headers are DPAPI-sealed on write and wiped on Completed and Failed; 401 is Link expired; `refresh_headers`, `find_by_url`.
+  - App: `capture.rs` (`capture` with a 5 s duplicate window, and re-capture that refreshes an expired or paused download; `add_browser_links`; pairing wrappers); `api/guard.rs` (the three locks), `api/pairing.rs` (`PairGate`, numbered requests, 60 s), `api/server.rs` (axum; every route is a POST); commands `pair_answer(n, allow)`, `paired_clients`, `remove_paired_client`; events `haul:pair-request {n, browser}` and `haul:pair-closed {n}`.
+  - UI: `PairDialog.svelte`, `BrowserList.svelte` (a Browsers section in Rules), `lib/browsers.ts`.
+  - Extension: `decide.ts` (catch rule), `port.ts`, `net.ts`, `api.ts` (client), `handover.ts`, `pairstate.ts`, `store.ts`, `picker.ts`; entries `background.ts`, `content.ts`, `popup.ts`, `options.ts`, `picker-page.ts`; pages in `static/`.
+- **The locks**, in order: `Host` must be exactly `127.0.0.1:<port>` (421); `Origin` must be `chrome-extension://<id>` (403); a Bearer key whose SHA-256 is stored and bound to that origin (401; not needed for pair and status). No CORS headers. Body ≤ 2 MiB, ≤ 5,000 links (413).
+- **Load the extension by hand:**
+  1. `cd extension`, `npm install` (once), `npm run build`.
+  2. In Edge: `edge://extensions`, turn on Developer mode, Load unpacked, pick `extension\dist`.
+  3. Start Haul, click the Haul toolbar button, Pair with Haul, then Allow in Haul.
+- **Hand check still owed:** with the extension paired, click a real download of 1 MB or more on a normal site. It should appear in Haul's Queue, complete, and vanish from Edge's download list. With Haul closed, the same click should download in Edge as usual.
+- **Bugs found while building, each fixed with a test that failed first:**
+  - Edge sends no `Origin` on an extension's GET, so `GET /v1/status` was refused and the popup said Haul wasn't running. Status is now a POST (GET gets 405). Found by the real-browser test.
+  - Review: a stale pairing dialog could approve a newer request. Answers now carry the request number, and Haul closes the dialog when a request ends.
+  - Review: a download with no final URL was caught. It's now skipped, as the spec says.
+  - Review: a "waiting" pair state saved by a stopped worker kept Pair disabled for good. It now expires after 70 s.
+- **Rulings** (cost if wrong in each):
+  - Capture code lives in `capture.rs` (`impl AppCore`, fields `pub(crate)`), because `core.rs` was 718 lines. Cost: a file move.
+  - The catch rule runs before the pause, so downloads Haul won't take are never touched. Cost: a few ms of browser download first.
+  - A timed-out capture doesn't rescan (Haul was there, just slow); a refused connection rescans once. Cost: none.
+  - "Download all links…" sends no cookies. Cost: links from login-only sites show Offline in the Collector.
+  - Incognito downloads are never caught. Cost: one switch if wanted.
+  - Alt works through a recorded Alt+click (2 s). Cost: downloads a site starts by itself can't be skipped with Alt.
+  - Form-POST downloads: the spec's "no final URL" rule is followed, but Chrome often fills the final URL for POSTs too, so one can still be caught and then fail in Haul. Cost: start it again holding Alt. A real fix needs a spec change (track request methods, or Haul probes before answering).
+  - The Browsers list lives in the Rules view until a Settings page exists. Cost: it moves in plan 6.
+  - esbuild 0.28 (vitest's vite needs it), `@types/chrome` 0.3. Icons are the app's 32/64/128 PNGs. Cost: a soft 16 px toolbar icon.
+  - The Task 1 cookie test downloads 1 MiB, not 4: 4 MiB starved the timing tests in the same file. Cost: none.
+  - The real-browser test drives Edge over raw DevTools, because Playwright takes over downloads (even when only attached) and Edge then fails them. Cost: a small CDP helper in the test.
+  - Tests named in the plan whose failing run I did not see: the e2e pairing tests (their mock calls failed first instead), `dialog_closes_when_request_ends`, and the Rust `status_by_get_is_refused` (the running app locked `haul.exe`). Cost: weaker evidence for those only.
+- **Deferred minors (from the review):**
+  - The pause also waits for the cookie read, so more tiny files finish in the browser first (harmless).
+  - Pairing identity is only the name the extension sends; control characters aren't stripped (log lines); re-pairing the same extension adds a row and keeps the old key.
+  - No test runs migration 5 on a schema-4 DB with plain-text headers; old plain text may linger in SQLite free pages (consider `secure_delete` or a VACUUM).
+  - `EngineError::Network` keeps reqwest's full URL, including any `user:password` (today only in debug logs and the row's error).
+  - The extension rescans only on a dead port, not when another program answers there.
+  - A stray run of spaces in one store SQL string; the `api-port` file is never removed.
+  - A capture that took over 1.5 s but was queued downloads twice (browser and Haul): the accepted never-lose trade-off.
+- **Accepted for v1 (outside approach A's threat model):** another Windows user's program squatting the port while Haul is closed; same-user local programs forging Host/Origin or spamming pair requests; Strict/HttpOnly cookies sent with page-started downloads; the key in `chrome.storage.local`; Chrome's "ask where to save" setting is ignored for caught downloads.
+- **Flaky under load:** `resume::crash_simulation`, `queue::restart_resumes_interrupted` (simulated-crash timing) each failed once in a full run while other work loaded the PC; both pass alone (3/3). Not caused by plan 5.
+- **Testing while the app runs:** `tauri dev` locks `target\debug\haul.exe`, so run Rust tests with `CARGO_TARGET_DIR=_tmp/target-alt`.
+- **Real-browser test:** `npx playwright test -c playwright.real.config.ts extension` (needs the range server, `tauri dev` with port 9222, and the built extension). In a normal, unsandboxed session it should run fully; here only the pairing half could.
 
 ## Plan 4: post-processing and Rules (6 Nov 2026)
 - **What happens:** when every download in a package (or a lone download) is complete, a **run** starts: verify → extract → sort → scan → notify. One run at a time; every step's state is saved, so a restart carries on from the first unfinished step. The drawer's "After download" list shows the steps; package rows say Verifying / Extracting / Sorting / Needs password / Needs attention.
