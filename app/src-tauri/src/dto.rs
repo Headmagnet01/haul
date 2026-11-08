@@ -152,3 +152,13 @@ pub struct CaptureRequest {
     /// Joined `name=value; ...`, exactly as a `Cookie` header.
     pub cookies: Option<String>,
 }
+
+/// A browser extension paired with Haul, as the Browsers list shows it.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PairedClientView {
+    pub id: i64,
+    pub browser: String,
+    pub created_at: String,
+    pub last_seen: Option<String>,
+}

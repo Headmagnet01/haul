@@ -1,7 +1,8 @@
 //! Downloads and links that arrive from the browser extension.
 
+use crate::api::guard::{hash_token, new_token};
 use crate::core::{AppCore, DEFAULT_CONNECTIONS};
-use crate::dto::{CaptureRequest, IntakeResult};
+use crate::dto::{CaptureRequest, IntakeResult, PairedClientView};
 use haul_engine::{DownloadState, EngineError, NewDownload, Priority};
 use std::time::{Duration, Instant};
 
@@ -81,6 +82,45 @@ impl AppCore {
             return Ok(IntakeResult { added: 0, skipped: 0 });
         }
         self.grabber.intake_labelled(links, "browser", page_title)
+    }
+
+    /// Pairs a browser extension: stores a hash of a fresh key bound to its origin, and returns the key.
+    pub fn pair_client(&self, browser: &str, origin: &str) -> Result<String, EngineError> {
+        let token = new_token();
+        self.store.add_paired_client(browser, origin, &hash_token(&token))?;
+        tracing::info!(browser, "browser paired");
+        Ok(token)
+    }
+
+    /// The paired client this key belongs to, if the key is known and used from the origin it was given to.
+    pub fn client_for(&self, token: &str, origin: &str) -> Option<i64> {
+        let c = self.store.paired_client_by_hash(&hash_token(token)).ok().flatten()?;
+        if c.origin != origin {
+            return None;
+        }
+        if let Err(e) = self.store.touch_paired_client(c.id) {
+            tracing::warn!(error = %e, "could not record when a browser was last seen");
+        }
+        Some(c.id)
+    }
+
+    pub fn paired_clients(&self) -> Result<Vec<PairedClientView>, EngineError> {
+        Ok(self
+            .store
+            .list_paired_clients()?
+            .into_iter()
+            .map(|c| PairedClientView {
+                id: c.id,
+                browser: c.browser,
+                created_at: c.created_at,
+                last_seen: c.last_seen,
+            })
+            .collect())
+    }
+
+    /// Forgets a paired browser; its key stops working at once.
+    pub fn remove_paired_client(&self, id: i64) -> Result<(), EngineError> {
+        self.store.remove_paired_client(id)
     }
 
     /// Downloads queued or running.

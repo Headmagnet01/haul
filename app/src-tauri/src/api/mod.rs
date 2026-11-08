@@ -2,3 +2,4 @@
 
 pub mod guard;
 pub mod pairing;
+pub mod server;
