@@ -1,6 +1,6 @@
 //! Windows toasts with an Open folder button. Clicking the toast shows Haul on Finished.
 
-use haul_engine::postproc::Notice;
+use haul_engine::postproc::{Notice, NoticeKind};
 use std::path::PathBuf;
 use tauri::AppHandle;
 
@@ -23,10 +23,9 @@ pub fn when_done_failed(message: &str) -> ToastSpec {
 /// The button's action, sent back to `on_activated`.
 const OPEN: &str = "open";
 
-/// Whether a post-processing notice is shown: "is ready" notices follow the switch,
-/// "needs attention" notices always show.
+/// Whether a post-processing notice is shown: ready ones follow the switch, attention ones always show.
 pub fn should_show(n: &Notice, notify_finished: bool) -> bool {
-    notify_finished || n.title.ends_with("needs attention")
+    notify_finished || n.kind == NoticeKind::Attention
 }
 
 /// The toast for a post-processing notice.
@@ -99,7 +98,8 @@ mod tests {
     use super::*;
 
     fn notice(title: &str, folder: Option<&str>) -> Notice {
-        Notice { title: title.into(), body: "Extracted 3 files".into(), folder: folder.map(PathBuf::from) }
+        let kind = if title.ends_with("needs attention") { NoticeKind::Attention } else { NoticeKind::Ready };
+        Notice { kind, title: title.into(), body: "Extracted 3 files".into(), folder: folder.map(PathBuf::from) }
     }
 
     #[test]
@@ -128,6 +128,20 @@ mod tests {
         assert_eq!(s.body, "Windows didn't shut down (access denied). Haul is still running.");
         assert_eq!(s.open_folder, None);
         assert_eq!(s.click_view, None);
+    }
+
+    #[test]
+    fn attention_kind_ignores_switch() {
+        let n = Notice { kind: NoticeKind::Attention, ..notice("a.zip: checksum mismatch", None) };
+        assert!(should_show(&n, false));
+    }
+
+    #[test]
+    fn ready_kind_respects_switch() {
+        // A ready notice whose title happens to end in "needs attention" still follows the switch.
+        let n = Notice { kind: NoticeKind::Ready, ..notice("what needs attention", None) };
+        assert!(!should_show(&n, false));
+        assert!(should_show(&n, true));
     }
 
     #[test]

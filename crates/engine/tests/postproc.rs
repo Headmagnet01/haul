@@ -494,3 +494,26 @@ async fn download_dir_can_change() {
     h.pp.set_download_dir(other.clone());
     assert_eq!(h.pp.download_dir(), other);
 }
+
+/// With auto post-processing off there is no "is ready" notice, so the held run says "finished".
+#[tokio::test]
+async fn auto_off_sends_finished_notice() {
+    let h = harness();
+    h.pp.set_settings(PostProcSettings { auto: false, ..Default::default() }).unwrap();
+    h.finish(None, "archives/plain.zip");
+    assert_eq!(h.settled().await.state, RunState::Held);
+    let n = h.notices.lock().unwrap().clone();
+    assert_eq!(n.len(), 1, "{n:?}");
+    assert_eq!(n[0].title, "plain.zip finished");
+    assert_eq!(n[0].kind, haul_engine::postproc::NoticeKind::Ready);
+    assert_eq!(n[0].folder.as_deref(), Some(h.dl.as_path()));
+}
+
+#[tokio::test]
+async fn ready_and_attention_notices_have_kinds() {
+    let h = harness();
+    h.finish(None, "archives/plain.zip");
+    h.wait("done", |r| r.len() == 1 && r[0].state == RunState::Done).await;
+    let n = h.notices.lock().unwrap().clone();
+    assert_eq!(n.iter().map(|n| n.kind).collect::<Vec<_>>(), vec![haul_engine::postproc::NoticeKind::Ready]);
+}

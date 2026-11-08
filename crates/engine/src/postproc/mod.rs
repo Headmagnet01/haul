@@ -52,9 +52,17 @@ impl Default for PostProcSettings {
     }
 }
 
+/// What a notice is about: "ready" ones follow the "notify when finished" switch, "attention" ones always show.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NoticeKind {
+    Ready,
+    Attention,
+}
+
 /// A Windows notification to show.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Notice {
+    pub kind: NoticeKind,
     pub title: String,
     pub body: String,
     pub folder: Option<PathBuf>,
@@ -523,6 +531,9 @@ impl Inner {
         let initial = if self.settings().auto { RunState::Queued } else { RunState::Held };
         let fresh = serde_json::to_string(&RunData::fresh()).unwrap_or_default();
         let Ok((run_id, new)) = self.store.ensure_run(pkg, did, initial.as_str(), &fresh) else { return };
+        if new && initial == RunState::Held {
+            self.finished_notice(run_id);
+        }
         if !new {
             let Ok(row) = self.store.get_run(run_id) else { return };
             if row.state != RunState::Waiting.as_str() || self.requeue(run_id).is_err() {
@@ -561,8 +572,26 @@ impl Inner {
         Some(row.id)
     }
 
+    /// With auto post-processing off nothing else says a download is done: "<name> finished".
+    fn finished_notice(&self, run_id: i64) {
+        let Ok(row) = self.store.get_run(run_id) else { return };
+        let Ok(t) = self.target(&row) else { return };
+        // A lone file keeps its extension (nothing was extracted); a package keeps its name.
+        let name = match (row.download_id, t.members.first()) {
+            (Some(_), Some(d)) => file_name_of(d),
+            _ => t.name.clone(),
+        };
+        (self.deps.notify)(Notice {
+            kind: NoticeKind::Ready,
+            title: format!("{name} finished"),
+            body: String::new(),
+            folder: Some(t.dir.clone()),
+        });
+    }
+
     fn attention(&self, t: &Target, detail: &str) {
         (self.deps.notify)(Notice {
+            kind: NoticeKind::Attention,
             title: format!("{} needs attention", t.name),
             body: detail.to_string(),
             folder: Some(t.dir.clone()),
@@ -949,7 +978,7 @@ impl Inner {
             .map(PathBuf::from)
             .or_else(|| data.moved.first().and_then(|m| Path::new(m).parent().map(Path::to_path_buf)))
             .or_else(|| Some(t.dir.clone()));
-        (self.deps.notify)(Notice { title: format!("{} is ready", t.name), body, folder });
+        (self.deps.notify)(Notice { kind: NoticeKind::Ready, title: format!("{} is ready", t.name), body, folder });
         Outcome::Done("Sent".into())
     }
 }
