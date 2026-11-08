@@ -24,6 +24,14 @@ async function appPage(): Promise<Page> {
   return page;
 }
 
+type Invoke = (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
+const invoke = (page: Page, cmd: string, args?: Record<string, unknown>) =>
+  page.evaluate(
+    ([c, a]) => (window as unknown as { __TAURI_INTERNALS__: { invoke: Invoke } }).__TAURI_INTERNALS__.invoke(c as string, a as Record<string, unknown>),
+    [cmd, args] as const,
+  );
+const isVisible = (page: Page) => invoke(page, 'plugin:window|is_visible', { label: 'main' }) as Promise<boolean>;
+
 const nav = (page: Page, name: RegExp) => page.getByRole('navigation', { name: 'Views' }).getByRole('button', { name });
 const collectorRow = (page: Page, name: string) =>
   page.locator('[aria-label="Collector links"] [role="row"][data-kind="link"]').filter({ hasText: name }).last();
@@ -59,13 +67,23 @@ test('real download: add, pause, resume, complete, verify', async () => {
   const pausedAt = parseFloat((await pct.textContent()) ?? '0');
   await page.keyboard.press('Space');
   await expect(row).toContainText('Downloading');
-  await expect(row).toContainText('Complete', { timeout: 60_000 });
   expect(pausedAt).toBeLessThan(100);
-  // Post-processing sorts the finished file (into Other\); read its path once that is done.
-  await expect(page.locator('.steps li[data-step="sort"]')).toHaveAttribute('data-state', /done|skipped/, { timeout: 30_000 });
-  await expect(page.locator('.steps li[data-step="notify"]')).toHaveAttribute('data-state', 'done', { timeout: 30_000 });
+  // A finished download leaves the Queue for Finished, so follow it by id: complete, then its
+  // post-processing run done (the sort step moves it into Other\), then read where it is now.
+  const id = Number(await row.getAttribute('data-id'));
+  const mine = async () => {
+    const s = (await invoke(page, 'snapshot')) as { downloads: { id: number; state: string; targetPath: string | null }[] };
+    return s.downloads.find((d) => d.id === id);
+  };
+  await expect.poll(async () => (await mine())?.state, { timeout: 60_000 }).toBe('completed');
+  await expect
+    .poll(async () => {
+      const runs = (await invoke(page, 'postproc_runs')) as { downloadId: number | null; state: string }[];
+      return runs.find((r) => r.downloadId === id)?.state;
+    }, { timeout: 30_000 })
+    .toBe('done');
 
-  const saved = (await page.locator('aside[aria-label="Details"] dd').nth(3).textContent())?.trim() ?? '';
+  const saved = (await mine())?.targetPath ?? '';
   expect(saved.toLowerCase().endsWith('.bin')).toBe(true);
   const got = createHash('sha256').update(readFileSync(saved)).digest('hex');
   expect(got).toBe(expectedSha());
@@ -163,4 +181,49 @@ test('a split 7z package downloads, extracts and sorts', async () => {
   );
   expect(made).toHaveLength(1);
   expect(readFileSync(join(other, made[0], 'hello.txt'), 'utf8')).toBe('hello haul\n');
+});
+
+test('close_keeps_downloading', async () => {
+  const page = await appPage();
+  await invoke(page, 'set_settings', { patch: { closeToTray: true, speedLimit: { enabled: true, bps: 2_000_000 } } });
+  try {
+    const name = `close-${Date.now()}`;
+    await sendToQueue(page, `http://127.0.0.1:${PORT}/${name}.bin`, name);
+    const written = async () => {
+      const s = (await invoke(page, 'snapshot')) as { downloads: { name: string; written: number; state: string }[] };
+      return s.downloads.find((d) => d.name.startsWith(name));
+    };
+    await expect.poll(async () => (await written())?.state, { timeout: 10_000 }).toBe('running');
+    // Like the X button: CloseRequested, which Haul turns into hide-to-tray.
+    await invoke(page, 'plugin:window|close', { label: 'main' });
+    await expect.poll(() => isVisible(page), { timeout: 5_000 }).toBe(false);
+    const before = (await written())!.written;
+    await page.waitForTimeout(3_000);
+    const after = await written();
+    expect(after!.state).toBe('running');
+    expect(after!.written).toBeGreaterThan(before);
+    const s = (await invoke(page, 'snapshot')) as { downloads: { id: number; name: string }[] };
+    await invoke(page, 'remove', { ids: [s.downloads.find((d) => d.name.startsWith(name))!.id] });
+  } finally {
+    await invoke(page, 'set_settings', { patch: { speedLimit: { enabled: false, bps: 2_000_000 } } });
+  }
+});
+
+test('second_launch_shows_first', async () => {
+  const page = await appPage();
+  if (await isVisible(page)) {
+    await invoke(page, 'plugin:window|close', { label: 'main' });
+    await expect.poll(() => isVisible(page), { timeout: 5_000 }).toBe(false);
+  }
+  const exe = resolve(dirname(fileURLToPath(import.meta.url)), '../../target/debug/haul.exe');
+  const t = Date.now();
+  // Throws if the second copy doesn't exit within 5 s.
+  execFileSync(exe, [], { timeout: 5_000, stdio: 'ignore' });
+  expect(Date.now() - t).toBeLessThan(5_000);
+  await expect.poll(() => isVisible(page), { timeout: 5_000 }).toBe(true);
+  const port = readFileSync(join(process.env.APPDATA ?? '', 'dev.haul.desktop', 'api-port'), 'utf8').trim();
+  const listening = execFileSync('netstat', ['-ano', '-p', 'TCP'], { encoding: 'utf8' })
+    .split('\n')
+    .filter((l) => l.includes(`127.0.0.1:${port} `) && l.includes('LISTENING'));
+  expect(listening).toHaveLength(1);
 });
