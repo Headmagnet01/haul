@@ -42,6 +42,9 @@ pub struct AppCore {
     recycler: Arc<dyn Recycler>,
     /// "When done": never saved, so every start is Nothing.
     when_done: Arc<Mutex<WhenDone>>,
+    /// How often `idle_for` read the store (tests check "Nothing" reads nothing).
+    #[cfg(test)]
+    pub(crate) idle_reads: Arc<std::sync::atomic::AtomicUsize>,
     power: Arc<dyn PowerAction>,
     /// Browser captures in the last few seconds, by URL: (download id, when).
     pub(crate) recent: Arc<Mutex<HashMap<String, (i64, Instant)>>>,
@@ -183,6 +186,8 @@ impl AppCore {
             postproc,
             recycler,
             when_done: Arc::default(),
+            #[cfg(test)]
+            idle_reads: Arc::default(),
             power: Arc::new(WindowsPower),
             recent: Arc::default(),
         }
@@ -515,23 +520,46 @@ impl AppCore {
     }
 
     /// A download started: arms the chosen mode and stops a running countdown.
-    pub fn when_done_started(&self) {
-        self.wd().on_started();
+    pub fn when_done_started(&self, id: haul_engine::DownloadId) {
+        self.wd().on_started(id);
     }
 
     /// One decision step with what the queue is doing now.
     pub fn when_done_step(&self) -> crate::when_done::Step {
-        let idle = self.idle();
-        self.wd().step(&idle, Instant::now())
+        self.when_done_step_at(Instant::now())
+    }
+
+    pub(crate) fn when_done_step_at(&self, now: Instant) -> crate::when_done::Step {
+        // Never hold the lock during the store reads below.
+        let watched = {
+            let w = self.wd();
+            if w.mode() == Mode::Nothing {
+                return crate::when_done::Step::Nothing;
+            }
+            w.watched().clone()
+        };
+        let idle = self.idle_for(&watched);
+        self.wd().step(&idle, now)
+    }
+
+    #[cfg(test)]
+    fn when_done_force_countdown(&self) {
+        self.wd().start_countdown(Instant::now());
     }
 
     /// Do it now (or the countdown ran out): carries out the chosen mode once.
+    /// Only while the countdown shows: if new work stopped it a moment ago, the click does nothing.
     pub async fn when_done_now(&self) -> std::io::Result<()> {
-        let mode = self.wd().take();
-        match mode {
+        match self.when_done_take_now() {
             Some(m) => self.carry_out(m).await,
             None => Ok(()),
         }
+    }
+
+    /// The mode Do it now should carry out (reset to Nothing), or None when no countdown shows.
+    pub fn when_done_take_now(&self) -> Option<Mode> {
+        let mut w = self.wd();
+        if w.counting() { w.take() } else { None }
     }
 
     /// Sleep keeps Haul running; Shut down pauses and saves downloads first. If Windows refuses
@@ -554,18 +582,41 @@ impl AppCore {
 
     /// What the queue and post-processing are doing, for "when done".
     pub fn idle(&self) -> Idle {
+        self.idle_for(&HashSet::new())
+    }
+
+    /// Like `idle`, judged against the downloads "when done" is waiting for.
+    pub fn idle_for(&self, watched: &HashSet<haul_engine::DownloadId>) -> Idle {
+        #[cfg(test)]
+        self.idle_reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let ds = self.store.list_downloads().unwrap_or_default();
         let runs = self.store.list_runs().unwrap_or_default();
         let schedule = self.settings.read().unwrap_or_else(|e| e.into_inner()).schedule.clone();
         let closed = schedule.is_some_and(|s| !haul_engine::is_within_window(chrono::Local::now().naive_local(), &s));
+        // Packages of the watched downloads, so a package's run counts as theirs.
+        let packages: HashSet<_> = ds.iter().filter(|d| watched.contains(&d.id)).filter_map(|d| d.package_id).collect();
+        let mismatch = runs.iter().any(|r| {
+            r.state == "failed"
+                && (r.download_id.is_some_and(|d| watched.contains(&d))
+                    || r.package_id.is_some_and(|p| packages.contains(&p)))
+                && serde_json::from_str::<haul_engine::postproc::RunData>(&r.steps_json).is_ok_and(|data| {
+                    data.steps.iter().any(|st| {
+                        st.kind == haul_engine::postproc::StepKind::Verify
+                            && st.state == haul_engine::postproc::StepState::Failed
+                    })
+                })
+        });
+        let held_by_schedule = closed && ds.iter().any(|d| d.state == DownloadState::Paused);
         Idle {
             running_or_queued: ds
                 .iter()
                 .filter(|d| matches!(d.state, DownloadState::Queued | DownloadState::Running))
                 .count(),
             postproc_busy: runs.iter().any(|r| matches!(r.state.as_str(), "queued" | "running" | "waiting")),
-            postproc_waiting_on_user: runs.iter().any(|r| r.state == "needs_password"),
-            held_by_schedule: closed && ds.iter().any(|d| d.state == DownloadState::Paused),
+            postproc_waiting_on_user: mismatch || runs.iter().any(|r| r.state == "needs_password"),
+            held_by_schedule,
+            stopped_by_hand: !held_by_schedule
+                && ds.iter().any(|d| d.state == DownloadState::Paused && watched.contains(&d.id)),
         }
     }
 
@@ -1337,6 +1388,7 @@ mod tests {
         let power = Arc::new(FakePower::default());
         let c = core(Store::open_in_memory().unwrap(), dir.path()).with_power(power.clone());
         c.set_when_done(crate::when_done::Mode::Shutdown);
+        c.when_done_force_countdown();
         c.when_done_now().await.unwrap();
         c.when_done_now().await.unwrap();
         assert_eq!(*power.calls.lock().unwrap(), vec!["shutdown"]);
@@ -1363,9 +1415,96 @@ mod tests {
         let power = Arc::new(FakePower::default());
         let c = core(Store::open_in_memory().unwrap(), dir.path()).with_power(power.clone());
         c.set_when_done(crate::when_done::Mode::Sleep);
+        c.when_done_force_countdown();
         c.when_done_now().await.unwrap();
         assert_eq!(*power.calls.lock().unwrap(), vec!["sleep"]);
         assert!(!c.queue.is_stopped());
+    }
+
+    /// One download row, queued under a schedule that never opens (so it never really starts).
+    fn watched_row(c: &AppCore) -> haul_engine::DownloadId {
+        queue_one(c);
+        c.store.list_downloads().unwrap()[0].id
+    }
+
+    /// Steps "when done" once now and once past the settle time; returns the second step.
+    fn step_past_settle(c: &AppCore) -> crate::when_done::Step {
+        let now = Instant::now();
+        c.when_done_step_at(now);
+        c.when_done_step_at(now + crate::when_done::SETTLE + std::time::Duration::from_millis(10))
+    }
+
+    #[tokio::test]
+    async fn pause_all_does_not_start_countdown() {
+        let dir = tempfile::tempdir().unwrap();
+        let c = core_fake(Store::open_in_memory().unwrap(), dir.path());
+        let id = watched_row(&c);
+        c.set_when_done(crate::when_done::Mode::Shutdown);
+        c.when_done_started(id);
+        c.store.set_state(id, DownloadState::Paused, None).unwrap();
+        assert_eq!(step_past_settle(&c), crate::when_done::Step::Nothing);
+        assert_eq!(c.when_done_status().countdown, None);
+    }
+
+    #[tokio::test]
+    async fn removed_paused_download_unblocks() {
+        let dir = tempfile::tempdir().unwrap();
+        let c = core_fake(Store::open_in_memory().unwrap(), dir.path());
+        let id = watched_row(&c);
+        c.set_when_done(crate::when_done::Mode::Shutdown);
+        c.when_done_started(id);
+        c.store.set_state(id, DownloadState::Paused, None).unwrap();
+        assert_eq!(step_past_settle(&c), crate::when_done::Step::Nothing);
+        c.store.delete_download(id).unwrap();
+        assert_eq!(step_past_settle(&c), crate::when_done::Step::Started);
+    }
+
+    fn failed_verify_run(c: &AppCore, id: haul_engine::DownloadId) {
+        use haul_engine::postproc::{RunData, Step, StepKind, StepState};
+        let data = RunData {
+            steps: vec![Step {
+                kind: StepKind::Verify,
+                state: StepState::Failed,
+                detail: Some("Checksum mismatch".into()),
+            }],
+            ..RunData::default()
+        };
+        let json = serde_json::to_string(&data).unwrap();
+        let (run, _) = c.store.ensure_run(None, Some(id), "failed", &json).unwrap();
+        c.store.save_run(run, "failed", &json).unwrap();
+    }
+
+    #[tokio::test]
+    async fn checksum_mismatch_blocks() {
+        let dir = tempfile::tempdir().unwrap();
+        let c = core_fake(Store::open_in_memory().unwrap(), dir.path());
+        let id = watched_row(&c);
+        c.store.set_state(id, DownloadState::Completed, None).unwrap();
+        failed_verify_run(&c, id);
+        let watched: std::collections::HashSet<_> = [id].into();
+        assert!(c.idle_for(&watched).postproc_waiting_on_user);
+        assert!(!c.idle_for(&std::collections::HashSet::new()).postproc_waiting_on_user);
+    }
+
+    #[tokio::test]
+    async fn do_it_now_without_countdown_does_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let power = Arc::new(FakePower::default());
+        let c = core(Store::open_in_memory().unwrap(), dir.path()).with_power(power.clone());
+        c.set_when_done(crate::when_done::Mode::Sleep);
+        c.when_done_now().await.unwrap();
+        assert!(power.calls.lock().unwrap().is_empty());
+        assert_eq!(c.when_done_status().mode, crate::when_done::Mode::Sleep);
+    }
+
+    #[tokio::test]
+    async fn nothing_mode_skips_reads() {
+        let dir = tempfile::tempdir().unwrap();
+        let c = core(Store::open_in_memory().unwrap(), dir.path());
+        for _ in 0..10 {
+            assert_eq!(c.when_done_step(), crate::when_done::Step::Nothing);
+        }
+        assert_eq!(c.idle_reads.load(std::sync::atomic::Ordering::SeqCst), 0);
     }
 
     #[tokio::test]

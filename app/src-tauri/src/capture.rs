@@ -345,10 +345,10 @@ mod tests {
         let deadline = Instant::now() + Duration::from_secs(15);
         let run = loop {
             let runs = c.store.list_runs().unwrap();
-            if let Some(r) = runs.into_iter().find(|r| r.download_id == Some(d.id)) {
-                if matches!(r.state.as_str(), "done" | "failed" | "skipped") {
-                    break r;
-                }
+            if let Some(r) = runs.into_iter().find(|r| r.download_id == Some(d.id))
+                && matches!(r.state.as_str(), "done" | "failed" | "skipped")
+            {
+                break r;
             }
             assert!(Instant::now() < deadline, "post-processing never finished");
             tokio::time::sleep(Duration::from_millis(50)).await;

@@ -77,7 +77,7 @@ fn spawn_when_done(app: tauri::AppHandle, core: AppCore) {
         loop {
             tokio::select! {
                 ev = rx.recv() => match ev {
-                    Ok(Event::StateChanged { state: DownloadState::Running, .. }) => core.when_done_started(),
+                    Ok(Event::StateChanged { id, state: DownloadState::Running, .. }) => core.when_done_started(id),
                     Ok(_) | Err(RecvError::Lagged(_)) => {}
                     Err(RecvError::Closed) => break,
                 },

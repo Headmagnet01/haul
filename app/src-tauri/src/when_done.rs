@@ -3,7 +3,9 @@
 //! The decision (`should_fire`) and the countdown are pure; the power call goes through
 //! `PowerAction`, so tests use a recording fake and never sleep or shut down a real PC.
 
+use haul_engine::DownloadId;
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::io;
 use std::time::{Duration, Instant};
 
@@ -32,6 +34,8 @@ pub struct Idle {
     pub postproc_waiting_on_user: bool,
     /// The schedule's window is closed and it paused downloads.
     pub held_by_schedule: bool,
+    /// A download that ran since the mode was chosen is now paused by hand (Pause all, say).
+    pub stopped_by_hand: bool,
 }
 
 impl Idle {
@@ -42,7 +46,12 @@ impl Idle {
 
 /// `armed` becomes true once anything has run after the mode was chosen.
 pub fn should_fire(mode: Mode, armed: bool, idle: &Idle) -> bool {
-    mode != Mode::Nothing && armed && !idle.busy() && !idle.postproc_waiting_on_user && !idle.held_by_schedule
+    mode != Mode::Nothing
+        && armed
+        && !idle.busy()
+        && !idle.postproc_waiting_on_user
+        && !idle.held_by_schedule
+        && !idle.stopped_by_hand
 }
 
 /// The 60 s countdown.
@@ -94,6 +103,8 @@ pub enum Step {
 pub struct WhenDone {
     mode: Mode,
     armed: bool,
+    /// Downloads seen starting since the mode was chosen: the work "when done" waits for.
+    watched: HashSet<DownloadId>,
     idle_since: Option<Instant>,
     countdown: Countdown,
 }
@@ -107,17 +118,46 @@ impl WhenDone {
     pub fn set_mode(&mut self, mode: Mode) {
         self.mode = mode;
         self.armed = false;
+        self.watched.clear();
         self.idle_since = None;
         self.countdown.cancel();
     }
 
     /// A download started (seen as an event, so a short one is never missed).
-    pub fn on_started(&mut self) {
+    pub fn on_started(&mut self, id: DownloadId) {
+        if self.mode != Mode::Nothing {
+            self.watched.insert(id);
+        }
+        self.busy_again();
+    }
+
+    /// New work: arms the chosen mode and stops a running countdown.
+    fn busy_again(&mut self) {
         if self.mode != Mode::Nothing {
             self.armed = true;
         }
         self.idle_since = None;
         self.countdown.cancel();
+    }
+
+    /// The downloads this choice of mode waits for.
+    pub fn watched(&self) -> &HashSet<DownloadId> {
+        &self.watched
+    }
+
+    /// The mode chosen now.
+    pub fn mode(&self) -> Mode {
+        self.mode
+    }
+
+    /// True while the 60 s countdown runs.
+    pub fn counting(&self) -> bool {
+        self.countdown.active()
+    }
+
+    #[cfg(test)]
+    pub fn start_countdown(&mut self, now: Instant) {
+        self.countdown.start(now);
     }
 
     /// Cancel: back to Nothing.
@@ -139,11 +179,11 @@ impl WhenDone {
             return Step::Nothing;
         }
         if idle.busy() {
-            self.on_started();
+            self.busy_again();
             return Step::Nothing;
         }
         if self.countdown.active() {
-            if idle.postproc_waiting_on_user || idle.held_by_schedule {
+            if idle.postproc_waiting_on_user || idle.held_by_schedule || idle.stopped_by_hand {
                 self.countdown.cancel();
                 self.idle_since = None;
                 return Step::Nothing;
@@ -248,7 +288,7 @@ mod tests {
         assert!(!should_fire(Mode::Shutdown, true, &waiting));
         let mut w = WhenDone::default();
         w.set_mode(Mode::Shutdown);
-        w.on_started();
+        w.on_started(1);
         assert!(run(&mut w, Instant::now(), 120, waiting).iter().all(|s| *s == Step::Nothing));
     }
 
@@ -274,7 +314,7 @@ mod tests {
     fn cancel_resets_to_nothing() {
         let mut w = WhenDone::default();
         w.set_mode(Mode::Shutdown);
-        w.on_started();
+        w.on_started(1);
         let t0 = Instant::now();
         assert!(run(&mut w, t0, 3, idle()).contains(&Step::Started));
         w.cancel();
@@ -286,7 +326,7 @@ mod tests {
     fn new_work_cancels_countdown() {
         let mut w = WhenDone::default();
         w.set_mode(Mode::Shutdown);
-        w.on_started();
+        w.on_started(1);
         let t0 = Instant::now();
         assert!(run(&mut w, t0, 3, idle()).contains(&Step::Started));
         // A download starts 10 s into the countdown.
@@ -306,6 +346,29 @@ mod tests {
         w.set_mode(Mode::Sleep);
         assert_eq!(w.take(), Some(Mode::Sleep));
         assert_eq!(w.take(), None);
+    }
+
+    #[test]
+    fn stopped_by_hand_blocks_fire() {
+        let paused = Idle { stopped_by_hand: true, ..Idle::default() };
+        assert!(!should_fire(Mode::Shutdown, true, &paused));
+    }
+
+    #[test]
+    fn set_mode_clears_watched() {
+        let mut w = WhenDone::default();
+        w.set_mode(Mode::Sleep);
+        w.on_started(7);
+        assert!(w.watched().contains(&7));
+        w.set_mode(Mode::Shutdown);
+        assert!(w.watched().is_empty());
+    }
+
+    #[test]
+    fn on_started_with_nothing_watches_nothing() {
+        let mut w = WhenDone::default();
+        w.on_started(7);
+        assert!(w.watched().is_empty());
     }
 
     #[test]
