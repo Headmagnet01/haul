@@ -173,8 +173,14 @@ export function createCollectorState(
     undo,
     /** Delete on the selection: a package removes all its links. */
     removeSelected() {
-      if (selected?.kind === 'package') removeWithUndo(linksOf(selected.key).map((l) => l.id));
-      else if (selected?.kind === 'link') removeWithUndo([selected.id]);
+      if (selected?.kind === 'package') {
+        // The next package takes the selection (the one before it at the end), as in the Queue.
+        const keys = items.flatMap((i) => (i.kind === 'package' ? [i.pkg.key] : []));
+        const at = keys.indexOf(selected.key);
+        const next = keys[at + 1] ?? keys[at - 1];
+        removeWithUndo(linksOf(selected.key).map((l) => l.id));
+        selected = next === undefined ? null : { kind: 'package', key: next };
+      } else if (selected?.kind === 'link') removeWithUndo([selected.id]);
     },
     clearOffline() {
       const ids = snapshot.links

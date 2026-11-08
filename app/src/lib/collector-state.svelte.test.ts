@@ -136,3 +136,22 @@ test('failed_collector_remove_restores', async () => {
   expect(c.items.some((i) => i.kind === 'link' && i.link.id === id)).toBe(true);
   expect(toasts.at(-1)).toBe("Couldn't remove: x");
 });
+
+const packageKeys = (c: ReturnType<typeof setup>['c']) =>
+  c.items.flatMap((i) => (i.kind === 'package' ? [i.pkg.key] : []));
+
+test('remove_package_selects_next', async () => {
+  const { b, c } = setup();
+  await b.addLinks('https://a.org/1.bin https://a.org/2.bin', 'paste');
+  await b.addLinks('https://b.org/3.bin https://b.org/4.bin', 'paste');
+  await b.addLinks('https://c.org/5.bin https://c.org/6.bin', 'paste');
+  await c.load();
+  const [first, second, third] = packageKeys(c);
+  c.select({ kind: 'package', key: first });
+  c.removeSelected();
+  expect(c.selected).toEqual({ kind: 'package', key: second });
+  c.select({ kind: 'package', key: third });
+  c.removeSelected();
+  // The last one: the one before it.
+  expect(c.selected).toEqual({ kind: 'package', key: second });
+});

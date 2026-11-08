@@ -141,3 +141,29 @@ test('remove_button_removes_with_undo', async ({ page }) => {
   await expect(crows(page)).toHaveCount(0);
   await expect(toast(page)).toContainText('Removed 3 links');
 });
+
+test('enter_in_select_or_editable_does_not_start', async ({ page }) => {
+  await page.goto('/');
+  await openCollector(page);
+  await paste(page, 'https://x.org/a.bin https://x.org/b.bin');
+  await expect(crow(page, 'b.bin')).toContainText('Online');
+  await crows(page).filter({ hasText: 'Pasted list · ' }).click();
+  // A future <select> or contentEditable field on the page.
+  await page.evaluate(() => {
+    const s = document.createElement('select');
+    s.id = 'probe-select';
+    s.append(new Option('one'), new Option('two'));
+    const ed = document.createElement('div');
+    ed.id = 'probe-edit';
+    ed.contentEditable = 'true';
+    ed.textContent = 'x';
+    document.body.append(s, ed);
+  });
+  for (const id of ['#probe-select', '#probe-edit']) {
+    await page.locator(id).focus();
+    await page.keyboard.press('Enter');
+  }
+  await page.waitForTimeout(300);
+  const calls = await page.evaluate(() => (window as unknown as { __haulMockCalls: string[] }).__haulMockCalls);
+  expect(calls).not.toContain('collectorStart');
+});

@@ -37,7 +37,8 @@
       if (e.key === 'Enter' || e.key === ' ') return;
     }
     const items = c.items;
-    if (e.key === 'Enter' && !e.ctrlKey && !e.altKey && tag !== 'INPUT' && tag !== 'TEXTAREA') {
+    const typing = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target?.isContentEditable === true;
+    if (e.key === 'Enter' && !e.ctrlKey && !e.altKey && !typing) {
       if (selIndex < 0 || e.repeat) return;
       e.preventDefault();
       void c.startSelected();
