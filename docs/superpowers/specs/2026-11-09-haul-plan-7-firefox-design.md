@@ -46,7 +46,7 @@ All calls stay on `chrome.*`, which Firefox's Manifest V3 supports with promises
 - **Final URL** (`background.ts` facts): `finalUrl: item.finalUrl ?? item.url`. Firefox reports one `url`, already after redirects. Cost: a form-POST download can't be told apart in Firefox, so one may be caught and then fail in Haul; Alt+click still leaves it to Firefox. This is the same trade-off Chrome has in practice (plan 5 rulings).
 - **Cookies** (new pure module `cookies.ts`, unit-tested; `background.ts` passes the item):
   - When `item.cookieStoreId` is set (Firefox, including containers), every lookup passes `storeId: item.cookieStoreId`.
-  - When `cookieStoreId` is set, it reads the unpartitioned cookies and, when there is a referrer, the cookies partitioned under the referrer's site (`partitionKey: { topLevelSite: "<scheme>://<registrable host>" }`). The two lists merge by name; the partitioned value wins.
+  - When `cookieStoreId` is set, it reads the unpartitioned cookies and, when there is an http(s) referrer, the partitioned cookies whose `partitionKey.topLevelSite` host is the referrer's host or a parent domain of it (one `partitionKey: {}` lookup returns every partition, so no public-suffix list is needed). The two lists merge by name; the partitioned value wins.
   - Chrome and Edge: unchanged (one `getAll({ url })`).
   - Any error still means "no cookies", as today.
 - **Private windows:** `item.incognito` is true in Firefox private windows; the existing rule already skips them.
