@@ -23,6 +23,8 @@ pub struct DownloadView {
     pub target_dir: String,
     pub target_path: Option<String>,
     pub created_at: String,
+    /// UTC, when it completed; None for older rows and unfinished ones.
+    pub finished_at: Option<String>,
     /// `[start, pos, end]` per saved range.
     pub segments: Vec<[u64; 3]>,
 }

@@ -3,6 +3,9 @@
   import Rail, { VIEWS } from './components/Rail.svelte';
   import Placeholder from './components/Placeholder.svelte';
   import QueueView from './components/QueueView.svelte';
+  import FinishedView from './components/FinishedView.svelte';
+  import FinishedDrawer from './components/FinishedDrawer.svelte';
+  import DeleteDialog from './components/DeleteDialog.svelte';
   import CollectorView from './components/CollectorView.svelte';
   import RulesView from './components/RulesView.svelte';
   import SettingsView from './components/SettingsView.svelte';
@@ -23,6 +26,10 @@
   const post = createPostprocState(app.backend, { showToast: (t) => app.showToast(t), onChanged: () => void app.load() });
   app.onUpdate((u) => collector.onUpdate(u));
   app.onUpdate((u) => post.onUpdate(u));
+  // Which rows are Finished depends on the runs.
+  $effect(() => {
+    app.runs = post.runs;
+  });
   void app.load();
   void collector.load();
   void post.load();
@@ -53,7 +60,9 @@
   let browsersRev = $state(0);
 
   const label = $derived(VIEWS.find((v) => v.id === app.view)?.label ?? '');
-  const active = $derived(app.snapshot.downloads.filter((d) => d.state !== 'completed' && !app.hidden.has(d.id)).length);
+  const active = $derived(
+    app.snapshot.downloads.filter((d) => d.state !== 'completed' && !app.finished.has(d.id) && !app.hidden.has(d.id)).length,
+  );
 
   // Paste and drop work in every view; links go to the Collector.
   const ROW_TYPE = 'application/x-haul-row';
@@ -89,11 +98,20 @@
 <svelte:window ondragover={onDragOver} ondrop={onDrop} />
 <svelte:document onpaste={onPaste} />
 
-<div class="app" class:with-drawer={app.view === 'queue'}>
-  <Rail view={app.view} onselect={(v) => (app.view = v)} queueCount={active} collectorCount={collector.count} />
+<div class="app" class:with-drawer={app.view === 'queue' || app.view === 'finished'}>
+  <Rail
+    view={app.view}
+    onselect={(v) => (app.view = v)}
+    queueCount={active}
+    collectorCount={collector.count}
+    finishedCount={app.finishedCount}
+  />
   {#if app.view === 'queue'}
     <QueueView {app} {post} />
     <Drawer {app} {post} />
+  {:else if app.view === 'finished'}
+    <FinishedView {app} />
+    <FinishedDrawer {app} {post} />
   {:else if app.view === 'collector'}
     <CollectorView c={collector} />
   {:else if app.view === 'rules'}
@@ -105,6 +123,7 @@
   {/if}
   <StatusBar {app} {collector} />
 </div>
+<DeleteDialog {app} />
 <PairDialog backend={app.backend} onanswered={() => browsersRev++} />
 <Toast toast={app.toast} ondismiss={() => (app.toast = null)} />
 

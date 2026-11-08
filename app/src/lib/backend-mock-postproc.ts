@@ -192,6 +192,13 @@ export function createMockPostproc(o: {
 
   return {
     tick,
+    /** A run that already ended, for the demo's Finished rows. */
+    seedDone(t: { packageId?: number; downloadId?: number }) {
+      const steps = fresh().map((s): Step => ({ ...s, state: 'skipped' }));
+      const packageId = t.packageId ?? null;
+      const downloadId = packageId === null ? (t.downloadId ?? null) : null;
+      runs.push({ id: nextRun++, packageId, downloadId, state: 'done', steps, updatedAt: now(), given: null, remember: false });
+    },
     runs: () => runs.map(view),
     process(t: { packageId?: number; downloadId?: number }): number {
       const pkg = t.packageId ?? null;

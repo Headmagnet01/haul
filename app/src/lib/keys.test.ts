@@ -7,6 +7,8 @@ const k = (key: string, mods: Partial<{ altKey: boolean; ctrlKey: boolean; shift
 test('key map', () => {
   expect(k(' ')).toBe('toggle');
   expect(k('Delete')).toBe('remove');
+  expect(k('Delete', { shiftKey: true })).toBe('delete-file');
+  expect(k('Enter')).toBe('open');
   expect(k('ArrowDown')).toBe('down');
   expect(k('ArrowUp')).toBe('up');
   expect(k('ArrowUp', { altKey: true })).toBe('move-up');

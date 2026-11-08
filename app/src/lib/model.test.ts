@@ -6,7 +6,7 @@ function dl(id: number, name: string, packageId: number | null = null, extra: Pa
   return {
     id, packageId, name, url: `https://a.org/${name}`, host: 'a.org', size: 100, written: 0, state: 'queued',
     error: null, priority: 'normal', position: id, connections: 8, resumable: null, targetDir: 'C:\\dl',
-    targetPath: null, createdAt: '2026-11-05T10:00:00Z', segments: [], ...extra,
+    targetPath: null, createdAt: '2026-11-05T10:00:00Z', finishedAt: null, segments: [], ...extra,
   };
 }
 

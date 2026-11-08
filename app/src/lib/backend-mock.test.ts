@@ -87,7 +87,12 @@ test('a download finishes in about 6 s', async () => {
 test('demo seed', async () => {
   const b = createMockBackend({ tickMs: 250, demo: true });
   const s = await b.snapshot();
-  expect(s.packages).toHaveLength(1);
+  expect(s.packages.map((p) => p.name)).toEqual(['sprite-fright-4k', 'holiday-photos']);
+  // Finished rows: a package and two lone files whose runs already ended, one of them gone from disk.
+  const done = s.downloads.filter((d) => d.state === 'completed' && d.finishedAt !== null);
+  expect(done.map((d) => d.name)).toContain('handbook-2026.pdf');
+  expect((await b.postprocRuns()).every((r) => r.state === 'done')).toBe(true);
+  expect(await b.filesExist(done.map((d) => d.id))).toHaveLength(done.length - 1);
   expect(s.downloads.length).toBeGreaterThanOrEqual(4);
   expect(s.downloads.some((d) => d.state === 'running' && d.name.endsWith('.iso'))).toBe(true);
   expect(s.downloads.some((d) => d.state === 'link_expired')).toBe(true);

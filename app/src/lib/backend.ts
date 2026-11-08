@@ -28,6 +28,16 @@ export interface Backend {
   setPriority(id: number, p: PriorityName): Promise<void>;
   reorder(ids: number[]): Promise<void>;
   openFolder(id: number): Promise<void>;
+  /** Opens a finished file with its default app. */
+  openFile(id: number): Promise<void>;
+  /** Explorer with the saved file selected (the same as `openFolder` for a finished file). */
+  reveal(id: number): Promise<void>;
+  /** The ids whose saved file is still on disk. */
+  filesExist(ids: number[]): Promise<number[]>;
+  /** Recycles each saved file, then removes its row. Rejects with `"<name> is in use"` or the OS message at the first failure. */
+  deleteFiles(ids: number[]): Promise<void>;
+  /** Adds the same URL as a new download; returns its id. */
+  downloadAgain(id: number): Promise<number>;
   postprocRuns(): Promise<Run[]>;
   /** Runs a finished package (or lone file) now. Returns the run id. */
   postprocProcess(t: { packageId?: number; downloadId?: number }): Promise<number>;

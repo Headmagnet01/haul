@@ -236,3 +236,25 @@ pub async fn paired_clients(core: State<'_, AppCore>) -> R<Vec<PairedClientView>
 pub async fn remove_paired_client(core: State<'_, AppCore>, id: i64) -> R<()> {
     blocking(&core, move |c| c.remove_paired_client(id).map_err(|e| e.to_string())).await
 }
+
+/// Opens a finished file with its default app.
+#[tauri::command]
+pub async fn open_file(app: AppHandle, core: State<'_, AppCore>, id: i64) -> R<()> {
+    let p = blocking(&core, move |c| c.finished_file(id).map_err(|e| e.to_string())).await?;
+    app.opener().open_path(p.to_string_lossy(), None::<&str>).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn files_exist(core: State<'_, AppCore>, ids: Vec<i64>) -> R<Vec<i64>> {
+    blocking(&core, move |c| Ok(c.files_exist(&ids))).await
+}
+
+#[tauri::command]
+pub async fn delete_files(core: State<'_, AppCore>, ids: Vec<i64>) -> R<()> {
+    blocking(&core, move |c| c.delete_files(&ids)).await
+}
+
+#[tauri::command]
+pub async fn download_again(core: State<'_, AppCore>, id: i64) -> R<i64> {
+    blocking(&core, move |c| c.download_again(id).map_err(|e| e.to_string())).await
+}

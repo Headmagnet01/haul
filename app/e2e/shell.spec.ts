@@ -10,7 +10,7 @@ test('shell_renders', async ({ page }) => {
   await expect(nav.getByRole('button', { name: 'Queue' })).toHaveAttribute('aria-current', 'page');
   await nav.getByRole('button', { name: 'Finished' }).click();
   await expect(page.getByRole('heading', { name: 'Finished' })).toBeVisible();
-  await expect(page.getByText('Arrives in a later version.')).toBeVisible();
+  await expect(page.getByText('Nothing finished yet')).toBeVisible();
   const font = await page.evaluate(() => getComputedStyle(document.body).fontFamily);
   expect(font.startsWith('"IBM Plex Sans"')).toBe(true);
 });

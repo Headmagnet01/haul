@@ -27,6 +27,8 @@ export interface DownloadView {
   targetDir: string;
   targetPath: string | null;
   createdAt: string;
+  /** UTC, when it completed; null for older rows and unfinished ones. */
+  finishedAt: string | null;
   segments: Seg[];
 }
 

@@ -7,7 +7,7 @@ use crate::dto::{
 use crate::settings::{Settings, SettingsPatch};
 use haul_engine::postproc::extract::SevenZip;
 use haul_engine::postproc::scan::Defender;
-use haul_engine::postproc::sort::RecycleBin;
+use haul_engine::postproc::sort::{RecycleBin, Recycler};
 use haul_engine::postproc::{Notice, PostProc, PostProcDeps};
 use haul_engine::{
     Download, DownloadState, EngineError, EventBus, Grabber, HostLimiter, Priority, ProbeFn, Queue, RateLimiter,
@@ -37,6 +37,8 @@ pub struct AppCore {
     pub(crate) grabber: Grabber,
     settings: Arc<RwLock<Settings>>,
     postproc: PostProc,
+    /// Finished view's Delete file…; the same Recycle Bin post-processing uses.
+    recycler: Arc<dyn Recycler>,
     /// Browser captures in the last few seconds, by URL: (download id, when).
     pub(crate) recent: Arc<Mutex<HashMap<String, (i64, Instant)>>>,
 }
@@ -76,6 +78,11 @@ fn parse_priority(s: &str) -> Result<Priority, EngineError> {
         "low" => Ok(Priority::Low),
         _ => Err(invalid("unknown priority")),
     }
+}
+
+/// Windows' "being used by another process" (`ERROR_SHARING_VIOLATION`, `ERROR_LOCK_VIOLATION`).
+fn in_use(e: &str) -> bool {
+    e.contains("os error 32") || e.contains("os error 33") || e.contains("being used by another process")
 }
 
 fn display_name(d: &Download) -> String {
@@ -160,6 +167,7 @@ impl AppCore {
             queue.set_schedule(schedule);
         }
         let grabber = Grabber::new(store.clone(), ctx.events.clone(), prober);
+        let recycler = deps.recycler.clone();
         let postproc =
             PostProc::start(store.clone(), ctx.events.clone(), queue.clone(), deps, settings.download_dir.clone());
         AppCore {
@@ -169,6 +177,7 @@ impl AppCore {
             grabber,
             settings: Arc::new(RwLock::new(settings)),
             postproc,
+            recycler,
             recent: Arc::default(),
         }
     }
@@ -241,6 +250,7 @@ impl AppCore {
             target_dir: d.target_dir.to_string_lossy().into_owned(),
             target_path: d.target_path.map(|p| p.to_string_lossy().into_owned()),
             created_at: d.created_at,
+            finished_at: d.finished_at,
             segments: segs.iter().map(|r| [r.start, r.pos, r.end]).collect(),
         }
     }
@@ -362,6 +372,59 @@ impl AppCore {
             Some(p) if d.state == DownloadState::Completed => FolderTarget::RevealFile(p),
             _ => FolderTarget::OpenDir(d.target_dir),
         })
+    }
+
+    /// A completed download's saved file, if it is still on disk.
+    pub fn finished_file(&self, id: i64) -> Result<PathBuf, EngineError> {
+        let d = self.store.get_download(id)?;
+        match d.target_path {
+            Some(p) if d.state == DownloadState::Completed && p.exists() => Ok(p),
+            _ => Err(invalid("That file is no longer on disk.")),
+        }
+    }
+
+    /// The ids among `ids` whose saved file exists.
+    pub fn files_exist(&self, ids: &[i64]) -> Vec<i64> {
+        ids.iter()
+            .copied()
+            .filter(|&id| self.store.get_download(id).ok().and_then(|d| d.target_path).is_some_and(|p| p.exists()))
+            .collect()
+    }
+
+    /// Sends each saved file to the Recycle Bin, then deletes its row. A file already gone is not an error.
+    /// Stops at the first failure, leaving that row and the ones after it.
+    pub fn delete_files(&self, ids: &[i64]) -> Result<(), String> {
+        for &id in ids {
+            let d = self.store.get_download(id).map_err(|e| e.to_string())?;
+            if let Some(p) = d.target_path.clone().filter(|p| p.exists())
+                && let Err(e) = self.recycler.recycle(std::slice::from_ref(&p))
+            {
+                let name = p.file_name().map_or_else(|| display_name(&d), |n| n.to_string_lossy().into_owned());
+                return Err(if in_use(&e) { format!("{name} is in use") } else { format!("{name}: {e}") });
+            }
+            self.queue.remove(id);
+        }
+        Ok(())
+    }
+
+    /// Queues the same URL again as a new download, into the current download folder.
+    pub fn download_again(&self, id: i64) -> Result<i64, EngineError> {
+        let d = self.store.get_download(id)?;
+        self.queue.add(haul_engine::NewDownload {
+            package_id: None,
+            url: d.url,
+            headers_json: d.headers_json,
+            target_dir: self.download_dir(),
+            file_name: None,
+            priority: Priority::Normal,
+            connections: self.connections(),
+            speed_limit: None,
+        })
+    }
+
+    #[cfg(test)]
+    fn with_recycler(self, recycler: Arc<dyn Recycler>) -> AppCore {
+        AppCore { recycler, ..self }
     }
 
     pub fn postproc_runs(&self) -> Result<Vec<Run>, EngineError> {
@@ -871,5 +934,111 @@ mod tests {
         assert_eq!(c.settings().download_dir, gone);
         queue_one(&c);
         assert_eq!(c.store.list_downloads().unwrap()[0].target_dir, gone);
+    }
+
+    /// Records what it was asked to recycle, or fails every call with `fail`.
+    #[derive(Default)]
+    struct FakeBin {
+        seen: Mutex<Vec<PathBuf>>,
+        fail: Option<String>,
+    }
+
+    impl haul_engine::postproc::sort::Recycler for FakeBin {
+        fn recycle(&self, paths: &[PathBuf]) -> Result<(), String> {
+            if let Some(e) = &self.fail {
+                return Err(e.clone());
+            }
+            self.seen.lock().unwrap().extend_from_slice(paths);
+            Ok(())
+        }
+    }
+
+    /// One completed download saved at `<dir>/<name>`, written to disk when `on_disk`.
+    fn finished_one(c: &AppCore, dir: &std::path::Path, name: &str, on_disk: bool) -> (i64, PathBuf) {
+        queue_one(c);
+        let id = c.store.list_downloads().unwrap().last().unwrap().id;
+        let path = dir.join(name);
+        if on_disk {
+            std::fs::write(&path, b"x").unwrap();
+        }
+        c.store.set_completed(id, &path).unwrap();
+        (id, path)
+    }
+
+    #[tokio::test]
+    async fn snapshot_carries_finished_at() {
+        let dir = tempfile::tempdir().unwrap();
+        let c = core(Store::open_in_memory().unwrap(), dir.path());
+        queue_one(&c);
+        assert_eq!(c.snapshot().unwrap().downloads[0].finished_at, None);
+        let (id, _) = finished_one(&c, dir.path(), "a.bin", true);
+        let d = c.snapshot().unwrap().downloads.into_iter().find(|d| d.id == id).unwrap();
+        assert!(d.finished_at.is_some());
+    }
+
+    #[tokio::test]
+    async fn files_exist_lists_ids_on_disk() {
+        let dir = tempfile::tempdir().unwrap();
+        let c = core(Store::open_in_memory().unwrap(), dir.path());
+        let (a, _) = finished_one(&c, dir.path(), "a.bin", true);
+        let (b, _) = finished_one(&c, dir.path(), "b.bin", false);
+        assert_eq!(c.files_exist(&[a, b, 999]), vec![a]);
+    }
+
+    #[tokio::test]
+    async fn delete_files_recycles_and_removes() {
+        let dir = tempfile::tempdir().unwrap();
+        let bin = Arc::new(FakeBin::default());
+        let c = core(Store::open_in_memory().unwrap(), dir.path()).with_recycler(bin.clone());
+        let (id, path) = finished_one(&c, dir.path(), "a.bin", true);
+        c.delete_files(&[id]).unwrap();
+        assert_eq!(*bin.seen.lock().unwrap(), vec![path]);
+        assert!(c.store.list_downloads().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn delete_file_in_use_keeps_row() {
+        let dir = tempfile::tempdir().unwrap();
+        let bin = Arc::new(FakeBin {
+            fail: Some(
+                "The process cannot access the file because it is being used by another process. (os error 32)".into(),
+            ),
+            ..FakeBin::default()
+        });
+        let c = core(Store::open_in_memory().unwrap(), dir.path()).with_recycler(bin);
+        let (a, _) = finished_one(&c, dir.path(), "a.bin", true);
+        let (b, _) = finished_one(&c, dir.path(), "b.bin", true);
+        let err = c.delete_files(&[a, b]).unwrap_err();
+        assert_eq!(err, "a.bin is in use");
+        let left: Vec<i64> = c.store.list_downloads().unwrap().iter().map(|d| d.id).collect();
+        assert_eq!(left, vec![a, b]);
+    }
+
+    #[tokio::test]
+    async fn delete_files_missing_file_just_removes_row() {
+        let dir = tempfile::tempdir().unwrap();
+        let bin = Arc::new(FakeBin::default());
+        let c = core(Store::open_in_memory().unwrap(), dir.path()).with_recycler(bin.clone());
+        let (id, _) = finished_one(&c, dir.path(), "gone.bin", false);
+        c.delete_files(&[id]).unwrap();
+        assert!(bin.seen.lock().unwrap().is_empty());
+        assert!(c.store.list_downloads().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn download_again_uses_same_url() {
+        let dir = tempfile::tempdir().unwrap();
+        let c = core(Store::open_in_memory().unwrap(), dir.path());
+        let (id, _) = finished_one(&c, dir.path(), "a.bin", true);
+        let other = dir.path().join("new");
+        std::fs::create_dir(&other).unwrap();
+        c.set_settings(crate::settings::SettingsPatch { download_dir: Some(other.clone()), ..patch() }).unwrap();
+        let again = c.download_again(id).unwrap();
+        assert_ne!(again, id);
+        let d = c.store.get_download(again).unwrap();
+        assert_eq!(d.url, "https://a.org/f.bin");
+        assert_eq!(d.target_dir, other);
+        assert_eq!(d.state, DownloadState::Queued);
+        assert_eq!(c.store.get_download(id).unwrap().state, DownloadState::Completed);
     }
 }

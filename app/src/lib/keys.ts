@@ -1,4 +1,5 @@
-export type Action = 'up' | 'down' | 'toggle' | 'remove' | 'expand' | 'collapse' | 'move-up' | 'move-down' | 'focus-filter';
+export type Action = 'up' | 'down' | 'toggle' | 'remove' | 'expand' | 'collapse' | 'move-up' | 'move-down' | 'focus-filter'
+  | 'open' | 'delete-file';
 
 export interface KeyLike {
   key: string;
@@ -10,7 +11,7 @@ export interface KeyLike {
 
 const TEXT_TAGS = new Set(['INPUT', 'TEXTAREA', 'SELECT']);
 
-/** Queue shortcuts. Nothing fires while typing in a text field, so Space types a space there. */
+/** Queue and Finished shortcuts. Nothing fires while typing in a text field, so Space types a space there. */
 export function keyAction(e: KeyLike): Action | null {
   if (e.target && (TEXT_TAGS.has(e.target.tagName.toUpperCase()) || e.target.isContentEditable)) return null;
   if (e.ctrlKey) return !e.altKey && e.key.toLowerCase() === 'f' ? 'focus-filter' : null;
@@ -23,7 +24,9 @@ export function keyAction(e: KeyLike): Action | null {
     case ' ':
       return 'toggle';
     case 'Delete':
-      return 'remove';
+      return e.shiftKey ? 'delete-file' : 'remove';
+    case 'Enter':
+      return 'open';
     case 'ArrowUp':
       return 'up';
     case 'ArrowDown':

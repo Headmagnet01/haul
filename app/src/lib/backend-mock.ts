@@ -141,6 +141,8 @@ export function createMockBackend(
   let limit = readLimit();
   // Like the engine: a running row is removed only after its transfer stops (one tick later).
   const removing = new Set<number>();
+  // Finished files deleted outside Haul (the demo seeds one).
+  const missing = new Set<number>();
   const tickS = opts.tickMs / 1000;
 
   const sort = () => {
@@ -160,7 +162,7 @@ export function createMockBackend(
       id: nextId++, packageId, name, url, host: (() => { try { return new URL(url).host; } catch { return ''; } })(),
       size, written: 0, state: 'queued', error: null, priority: 'normal',
       position: downloads.reduce((m, x) => Math.max(m, x.position), 0) + 1, connections: 4, resumable: true,
-      targetDir: 'C:\\Users\\you\\Downloads', targetPath: null, createdAt: nowIso(), segments: [], ...extra,
+      targetDir: 'C:\\Users\\you\\Downloads', targetPath: null, createdAt: nowIso(), finishedAt: null, segments: [], ...extra,
     };
     downloads.push(d);
     if (sim) sims.set(d.id, sim);
@@ -242,6 +244,7 @@ export function createMockBackend(
       });
       if (d.segments.every((g) => g[1] >= g[2])) {
         d.targetPath = `${d.targetDir}\\${d.name}`;
+        d.finishedAt = nowIso();
         setState(d, 'completed');
       }
     }
@@ -281,6 +284,31 @@ export function createMockBackend(
     add(zip, null, { name: 'quarterly-report-scans.zip', size: 1_240_000_000, connections: 8, state: 'link_expired', segments: at(1_240_000_000, 8, 0.44, zip) });
     const mp4 = 'https://lectures.example.edu/cs101/lecture-07-recording.mp4';
     add(mp4, null, { size: 920_000_000, connections: 8, state: 'paused', resumable: true, segments: at(920_000_000, 8, 0.27, mp4) });
+    // Finished: a package from this morning, a file from last week and one deleted outside Haul.
+    const stamp = (t: Date) => t.toISOString().replace(/\.\d+Z$/, 'Z');
+    const today = (h: number, m: number) => {
+      const t = new Date();
+      t.setHours(h, m, 0, 0);
+      return stamp(t);
+    };
+    const daysAgo = (n: number) => stamp(new Date(Date.now() - n * 86_400_000));
+    const done = (url: string, packageId: number | null, size: number, finishedAt: string) => {
+      const name = nameFromUrl(url);
+      return add(url, packageId, {
+        name, size, connections: 8, state: 'completed', finishedAt, createdAt: finishedAt,
+        segments: [[0, size, size]], targetPath: `C:\\Users\\you\\Downloads\\${name}`,
+      });
+    };
+    const photos: PackageView = { id: nextPkg++, name: 'holiday-photos', createdAt: today(9, 10) };
+    packages.push(photos);
+    done('https://share.example.org/holiday-photos.part1.rar', photos.id, 700_000_000, today(9, 41));
+    done('https://share.example.org/holiday-photos.part2.rar', photos.id, 412_000_000, today(9, 44));
+    const pdf = done('https://docs.example.org/handbook-2026.pdf', null, 8_400_000, daysAgo(6));
+    const gone = done('https://cdn.example.org/tools/old-setup.exe', null, 96_000_000, daysAgo(9));
+    missing.add(gone.id);
+    postproc.seedDone({ packageId: photos.id });
+    postproc.seedDone({ downloadId: pdf.id });
+    postproc.seedDone({ downloadId: gone.id });
     for (const d of downloads) d.written = d.segments.reduce((a, g) => a + (g[1] - g[0]), 0);
   }
 
@@ -445,6 +473,37 @@ export function createMockBackend(
     },
     async openFolder() {
       rec('openFolder');
+    },
+    async openFile(id) {
+      rec(`openFile:${id}`);
+      if (missing.has(id)) throw 'That file is no longer on disk.';
+    },
+    async reveal(id) {
+      rec(`reveal:${id}`);
+    },
+    async filesExist(ids) {
+      rec('filesExist');
+      return ids.filter((id) => !!find(id)?.targetPath && !missing.has(id));
+    },
+    async deleteFiles(ids) {
+      rec('deleteFiles');
+      for (const id of ids) {
+        const d = find(id);
+        if (!d) continue;
+        // A name with "locked" stands in for a file another program has open.
+        if (d.name.includes('locked') && !missing.has(id)) throw `${d.name} is in use`;
+        downloads = downloads.filter((x) => x.id !== id);
+        sims.delete(id);
+      }
+      pending.resync = true;
+    },
+    async downloadAgain(id) {
+      rec('downloadAgain');
+      const d = find(id);
+      if (!d) throw 'No such download';
+      const n = add(d.url, null, { name: d.name, size: d.size, targetDir: own.downloadDir, connections: own.connections });
+      pending.states.push({ id: n.id, state: 'queued', error: null });
+      return n.id;
     },
     async postprocRuns() {
       rec('postprocRuns');

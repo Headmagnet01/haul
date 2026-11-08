@@ -2,7 +2,9 @@ import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 import type { Backend } from './backend';
 import { applyUpdate, buildList, planDrop, planMove, summary, type ListItem, type MovePlan, type Sel } from './model';
 import { RangeSpeeds } from './speeds';
-import type { DownloadView, IntakeResult, Snapshot, Source, SpeedLimit, Update } from './types';
+import { finishedIds, finishedList } from './finished';
+import { errText } from './postproc';
+import type { DownloadView, IntakeResult, Run, Snapshot, Source, SpeedLimit, Update } from './types';
 
 export type View = 'queue' | 'collector' | 'finished' | 'rules' | 'settings';
 
@@ -36,8 +38,20 @@ export function createAppState(backend: Backend) {
   let toastSeq = 0;
   let toastTimer: ReturnType<typeof setTimeout> | undefined;
 
-  const list = $derived<ListItem[]>(buildList(snapshot, { collapsed, filter, hidden }));
-  const visible = $derived(snapshot.downloads.filter((d) => !hidden.has(d.id)));
+  // Post-processing runs decide when a package is Finished; App.svelte feeds them in.
+  let runs = $state<Run[]>([]);
+  const finished = $derived(finishedIds(snapshot, runs));
+  const queueSnap = $derived<Snapshot>({ ...snapshot, downloads: snapshot.downloads.filter((d) => !finished.has(d.id)) });
+  /** Finished packages the user opened; the rest stay collapsed. */
+  const expanded = new SvelteSet<number>();
+  /** Finished files no longer on disk. */
+  const missing = new SvelteSet<number>();
+  let finishedFilter = $state('');
+  let confirmDelete = $state<number[] | null>(null);
+  const list = $derived<ListItem[]>(buildList(queueSnap, { collapsed, filter, hidden }));
+  const doneList = $derived<ListItem[]>(finishedList(snapshot, finished, { expanded, filter: finishedFilter, hidden }));
+  const finishedCount = $derived(snapshot.downloads.filter((d) => finished.has(d.id) && !hidden.has(d.id)).length);
+  const visible = $derived(queueSnap.downloads.filter((d) => !hidden.has(d.id)));
   const totals = $derived(summary(visible, speeds));
 
   // Loads can overlap and updates keep arriving while one is in flight. Only the newest
@@ -180,6 +194,20 @@ export function createAppState(backend: Backend) {
     }
   }
 
+  /** Asks which of `ids` are still on disk; the rest show Missing. */
+  async function checkFiles(ids: number[]) {
+    if (!ids.length) return;
+    try {
+      const there = new Set(await backend.filesExist(ids));
+      for (const id of ids) {
+        if (there.has(id)) missing.delete(id);
+        else missing.add(id);
+      }
+    } catch {
+      /* leave the marks as they were */
+    }
+  }
+
   return {
     backend,
     get snapshot() { return snapshot; },
@@ -204,6 +232,63 @@ export function createAppState(backend: Backend) {
       await backend.setSettings({ speedLimit: l });
     },
     get list() { return list; },
+    get runs() { return runs; },
+    set runs(v: Run[]) { runs = v; },
+    get finished() { return finished; },
+    get finishedList() { return doneList; },
+    get finishedCount() { return finishedCount; },
+    get finishedFilter() { return finishedFilter; },
+    set finishedFilter(v: string) { finishedFilter = v; },
+    expanded,
+    missing,
+    checkFiles,
+    async openFile(id: number) {
+      try {
+        await backend.openFile(id);
+      } catch (e) {
+        showToast(errText(e));
+        void checkFiles([id]);
+      }
+    },
+    async reveal(id: number) {
+      try {
+        await backend.reveal(id);
+      } catch (e) {
+        showToast(errText(e));
+      }
+    },
+    /** The files waiting on the Delete file… confirm, or null. */
+    get confirmDelete() { return confirmDelete; },
+    askDelete(ids: number[]) {
+      const live = ids.filter((id) => !hidden.has(id));
+      if (live.length) confirmDelete = live;
+    },
+    cancelDelete() {
+      confirmDelete = null;
+    },
+    /** Shift+Delete, after the confirm: recycles the files, then the rows go. */
+    async deleteFiles(ids: number[]) {
+      confirmDelete = null;
+      if (!ids.length) return;
+      try {
+        await backend.deleteFiles(ids);
+        const name = ids.length === 1 ? (byId.get(ids[0])?.name ?? 'the file') : `${ids.length} files`;
+        showToast(`Moved ${name} to the Recycle Bin`);
+      } catch (e) {
+        showToast(errText(e));
+      } finally {
+        await load();
+      }
+    },
+    async downloadAgain(id: number) {
+      try {
+        await backend.downloadAgain(id);
+        showToast(`Added ${byId.get(id)?.name ?? 'the download'} to the Queue`, { label: 'Show', run: () => (view = 'queue') });
+      } catch (e) {
+        showToast(errText(e));
+      }
+      await load();
+    },
     get totals() { return totals; },
     onUpdate(cb: (u: Update) => void) {
       listeners.add(cb);

@@ -7,7 +7,7 @@ function dl(id: number, state: State): DownloadView {
   return {
     id, packageId: null, name: `f${id}.bin`, url: `https://a.org/f${id}.bin`, host: 'a.org', size: 100, written: 0,
     state, error: null, priority: 'normal', position: id, connections: 8, resumable: true, targetDir: 'C:\\dl',
-    targetPath: null, createdAt: '2026-11-05T10:00:00Z', segments: [],
+    targetPath: null, createdAt: '2026-11-05T10:00:00Z', finishedAt: null, segments: [],
   };
 }
 const snap = (...ds: DownloadView[]): Snapshot => ({ packages: [], downloads: ds, speedLimit: { enabled: false, bps: 1 } });

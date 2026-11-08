@@ -18,8 +18,11 @@
     onselect,
     queueCount = 0,
     collectorCount = 0,
-  }: { view: View; onselect: (v: View) => void; queueCount?: number; collectorCount?: number } = $props();
-  const countOf = (v: View) => (v === 'queue' ? queueCount : v === 'collector' ? collectorCount : 0);
+    finishedCount = 0,
+  }: { view: View; onselect: (v: View) => void; queueCount?: number; collectorCount?: number; finishedCount?: number } =
+    $props();
+  const countOf = (v: View) =>
+    v === 'queue' ? queueCount : v === 'collector' ? collectorCount : v === 'finished' ? finishedCount : 0;
 </script>
 
 <aside class="rail">
