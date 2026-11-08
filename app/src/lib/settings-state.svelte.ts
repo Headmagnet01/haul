@@ -46,6 +46,11 @@ export function createSettingsState(backend: Backend, ui: { onChanged?: (p: Sett
     },
     load,
     save,
+    /** A value Haul won't save (typed wrong): shows `message` under the field and puts the saved value back. */
+    refuse(field: keyof Settings, message: string) {
+      error = { ...error, [field]: message };
+      rev++;
+    },
     /** Shows a change saved elsewhere (the status bar's toggles) without saving again. */
     mirror(p: SettingsPatch) {
       if (settings) settings = { ...settings, ...p };

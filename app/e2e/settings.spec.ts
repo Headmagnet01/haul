@@ -18,17 +18,32 @@ test('settings_groups_show', async ({ page }) => {
   await expect(region(page, 'Downloads')).toContainText('C:\\Users\\you\\Downloads');
 });
 
-test('downloads_at_once_saves_and_clamps', async ({ page }) => {
+test('downloads_at_once_saves_and_refuses_out_of_range', async ({ page }) => {
   await page.goto('/');
   await openSettings(page);
   const n = page.getByLabel('Downloads at once');
   await expect(n).toHaveValue('3');
+  await n.fill('7');
+  await n.press('Enter');
+  await expect(n).toHaveValue('7');
   await n.fill('25');
   await n.press('Enter');
-  await expect(n).toHaveValue('20');
+  await expect(region(page, 'Downloads').getByRole('alert')).toHaveText('Enter a whole number from 1 to 20.');
+  await expect(page.getByLabel('Downloads at once')).toHaveValue('7');
   await page.reload();
   await openSettings(page);
-  await expect(page.getByLabel('Downloads at once')).toHaveValue('20');
+  await expect(page.getByLabel('Downloads at once')).toHaveValue('7');
+});
+
+test('number_field_rejects_empty', async ({ page }) => {
+  await page.goto('/');
+  await openSettings(page);
+  const n = page.getByLabel('Connections per download');
+  const before = await n.inputValue();
+  await n.fill('');
+  await n.blur();
+  await expect(region(page, 'Downloads').getByRole('alert')).toHaveText('Enter a whole number from 1 to 16.');
+  await expect(page.getByLabel('Connections per download')).toHaveValue(before);
 });
 
 test('clipboard_switch_matches_status_bar', async ({ page }) => {

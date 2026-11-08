@@ -4,6 +4,7 @@
   import type { UpdateState } from '../lib/update-state.svelte';
   import { WEEKDAYS, type Settings, type SettingsPatch, type Weekday } from '../lib/types';
   import BrowserList from './BrowserList.svelte';
+  import { parseSpeed, parseWhole } from '../lib/settings-num';
 
   let { ss, backend, browsersRev = 0, up }: { ss: SettingsState; backend: Backend; browsersRev?: number; up?: UpdateState } =
     $props();
@@ -16,14 +17,19 @@
     if (dir) await ss.save({ downloadDir: dir });
   }
 
+  const RANGE = { maxParallel: [1, 20], connections: [1, 16] } as const;
+
   function num(field: 'maxParallel' | 'connections', e: Event) {
-    const v = Number((e.currentTarget as HTMLInputElement).value);
-    if (Number.isFinite(v)) void ss.save({ [field]: v } as SettingsPatch);
+    const [min, max] = RANGE[field];
+    const v = parseWhole((e.currentTarget as HTMLInputElement).value, min, max);
+    if (v === null) ss.refuse(field, `Enter a whole number from ${min} to ${max}.`);
+    else void ss.save({ [field]: v } as SettingsPatch);
   }
 
   function limitValue(cur: Settings, e: Event) {
-    const mb = Number((e.currentTarget as HTMLInputElement).value);
-    if (Number.isFinite(mb) && mb > 0) void ss.save({ speedLimit: { ...cur.speedLimit, bps: Math.round(mb * MB) } });
+    const mb = parseSpeed((e.currentTarget as HTMLInputElement).value);
+    if (mb === null) ss.refuse('speedLimit', 'Enter a speed of 0.01 MB/s or more.');
+    else void ss.save({ speedLimit: { ...cur.speedLimit, bps: Math.round(mb * MB) } });
   }
 
   const hhmm = (t: string) => t.slice(0, 5);
@@ -88,6 +94,9 @@
               <input type="number" min="0.01" step="0.1" value={+(s.speedLimit.bps / MB).toFixed(2)} onchange={(e) => limitValue(s, e)} onkeydown={enter} />
             </label>
           </div>
+          {@render err('maxParallel')}
+          {@render err('connections')}
+          {@render err('speedLimit')}
           <p class="help">The speed limit applies while its switch in the status bar is on.</p>
         </section>
 

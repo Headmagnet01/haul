@@ -34,3 +34,17 @@ test('mirror_shows_change_from_status_bar', async () => {
   s.mirror({ watchClipboard: true });
   expect(s.settings?.watchClipboard).toBe(true);
 });
+
+test('refuse_shows_message_without_saving', async () => {
+  const b = createMockBackend({ tickMs: 250, demo: false });
+  const s = createSettingsState(b, {});
+  await s.load();
+  const rev = s.rev;
+  const saves = b.calls.filter((c) => c === 'setSettings').length;
+  s.refuse('maxParallel', 'Enter a whole number from 1 to 20.');
+  expect(s.error.maxParallel).toBe('Enter a whole number from 1 to 20.');
+  expect(s.rev).toBe(rev + 1);
+  expect(b.calls.filter((c) => c === 'setSettings').length).toBe(saves);
+  expect(await s.save({ maxParallel: 4 })).toBe(true);
+  expect(s.error.maxParallel).toBeUndefined();
+});
