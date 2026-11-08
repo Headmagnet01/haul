@@ -197,6 +197,17 @@ async fn token_from_other_extension_is_401() {
 }
 
 #[tokio::test]
+async fn firefox_pairs_and_captures() {
+    let e = env().await;
+    let ff = "moz-extension://6c1d9f2e-1b7a-4e3c-9a55-0d2f7e8b4c31";
+    let token = e.pair_from(ff).await;
+    let r = e.post_from("/v1/capture", capture_body(), ff).bearer_auth(&token).send().await.unwrap();
+    assert_eq!(r.status(), 200);
+    let r = e.post_from("/v1/capture", capture_body(), EXT).bearer_auth(&token).send().await.unwrap();
+    assert_eq!(r.status(), 401, "a Firefox key is bound to its own origin");
+}
+
+#[tokio::test]
 async fn removed_client_token_is_401() {
     let e = env().await;
     let token = e.pair().await;

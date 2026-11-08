@@ -3,17 +3,30 @@
 use sha2::{Digest, Sha256};
 
 const EXTENSION_SCHEME: &str = "chrome-extension://";
+const FIREFOX_SCHEME: &str = "moz-extension://";
 
 /// The `Host` header must name exactly `127.0.0.1:<port>`, which blocks DNS rebinding.
 pub fn check_host(host: Option<&str>, port: u16) -> bool {
     host == Some(format!("127.0.0.1:{port}").as_str())
 }
 
-/// The request's origin, when it is a browser extension's (`chrome-extension://<id>`).
+/// The request's origin, when it is a browser extension's: `chrome-extension://<id>` (Chrome, Edge)
+/// or `moz-extension://<uuid>` (Firefox; a lowercase 8-4-4-4-12 uuid, random per profile and install).
 pub fn check_origin(origin: Option<&str>) -> Option<&str> {
     let o = origin?;
+    if let Some(uuid) = o.strip_prefix(FIREFOX_SCHEME) {
+        return is_lower_uuid(uuid).then_some(o);
+    }
     let id = o.strip_prefix(EXTENSION_SCHEME)?;
     (!id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric())).then_some(o)
+}
+
+fn is_lower_uuid(s: &str) -> bool {
+    s.len() == 36
+        && s.char_indices().all(|(i, c)| match i {
+            8 | 13 | 18 | 23 => c == '-',
+            _ => c.is_ascii_digit() || ('a'..='f').contains(&c),
+        })
 }
 
 /// The token in `Authorization: Bearer <token>`.
@@ -57,6 +70,28 @@ mod tests {
             assert_eq!(check_origin(Some(bad)), None, "{bad}");
         }
         assert_eq!(check_origin(None), None);
+    }
+
+    #[test]
+    fn origin_accepts_firefox_uuid() {
+        let uuid = "6c1d9f2e-1b7a-4e3c-9a55-0d2f7e8b4c31";
+        let ok = format!("moz-extension://{uuid}");
+        assert_eq!(check_origin(Some(&ok)), Some(ok.as_str()));
+        let bad = [
+            format!("moz-extension://{}", uuid.to_uppercase()),
+            format!("moz-extension://{}", &uuid[1..]),
+            format!("moz-extension://{uuid}0"),
+            format!("moz-extension://{}", uuid.replace('-', "")),
+            "moz-extension://6c1d9f2e1-b7a-4e3c-9a55-0d2f7e8b4c31".to_string(),
+            format!("moz-extension://{uuid}/"),
+            format!("moz-extension://{uuid}/popup.html"),
+            "moz-extension://".to_string(),
+            format!("moz-extension://{}", uuid.replacen('6', "g", 1)),
+            format!("chrome-extension://{uuid}"),
+        ];
+        for b in &bad {
+            assert_eq!(check_origin(Some(b)), None, "{b}");
+        }
     }
 
     #[test]
