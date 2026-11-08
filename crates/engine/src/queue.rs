@@ -284,7 +284,8 @@ fn dispatch(inner: &Arc<Inner>) {
         let running = inner.running.lock().unwrap();
         let mut auto = inner.auto_paused.lock().unwrap();
         for (id, r) in running.iter() {
-            if !r.removing && auto.insert(*id) {
+            // A cancelled transfer is stopping for a hand pause (or remove): never the schedule's to restart.
+            if !r.removing && !r.cancel.is_cancelled() && auto.insert(*id) {
                 r.cancel.cancel();
             }
         }

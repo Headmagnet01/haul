@@ -396,3 +396,30 @@ async fn hold_saves_and_release_carries_on() {
     wait_state(&c.store, b, DownloadState::Running, 5).await;
     q.shutdown().await;
 }
+
+/// A hand pause just as the schedule's window closes: the dispatcher may still see the
+/// cancelled transfer running, and must not put it on the schedule's restart list.
+#[tokio::test]
+async fn hand_pause_during_window_close_stays_paused() {
+    let srv = slow_server(20_000_000, 2_000_000).await;
+    let dir = tempfile::tempdir().unwrap();
+    let c = ctx_on(Store::open_in_memory().unwrap(), TransferConfig::for_tests());
+    let q = Queue::start(c.clone(), 20);
+    let ids: Vec<_> = (0..10).map(|_| q.add(nd(&srv.url, dir.path(), Priority::Normal)).unwrap()).collect();
+    for &id in &ids {
+        wait_state(&c.store, id, DownloadState::Running, 5).await;
+    }
+    for &id in &ids {
+        q.pause(id);
+    }
+    q.set_schedule(Some(never_window()));
+    for &id in &ids {
+        wait_state(&c.store, id, DownloadState::Paused, 5).await;
+    }
+    q.set_schedule(None);
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    for &id in &ids {
+        assert_eq!(c.store.get_download(id).unwrap().state, DownloadState::Paused, "{id:?} was restarted");
+    }
+    q.shutdown().await;
+}
