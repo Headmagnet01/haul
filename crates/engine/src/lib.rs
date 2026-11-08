@@ -29,6 +29,6 @@ pub use queue::Queue;
 pub use ratelimit::{HostLimiter, RateLimiter};
 pub use schedule::{Schedule, WhenDone, is_within_window};
 pub use segmenter::{MIB, Range};
-pub use store::{Batch, CollectorLink, Download, NewDownload, Package, Store};
+pub use store::{Batch, CollectorLink, Download, NewDownload, Package, PairedClient, Store};
 pub use transfer::{TransferConfig, TransferCtx, TransferJob, TransferOutcome, run_transfer};
 pub use types::{DownloadId, DownloadState, Event, LinkStatus, PackageId, Priority, ProbeInfo};

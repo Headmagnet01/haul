@@ -7,8 +7,10 @@ use rusqlite::{Connection, OptionalExtension, Row, params};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 
+mod clients;
 mod collector;
 mod postproc;
+pub use clients::PairedClient;
 pub use collector::{Batch, CollectorLink};
 pub use postproc::{RuleRowIn, RuleRowOut, RunRow};
 
