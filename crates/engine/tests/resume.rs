@@ -290,3 +290,47 @@ async fn cookie_sent_on_resume() {
     let p = completed(run(&c, id).await);
     assert_file_eq(&p, LEN);
 }
+
+/// A crash between the final rename and `set_completed` leaves the row Running with the
+/// finished file at its saved target path and no part file.
+fn simulate_crash_after_rename(ctx: &TransferCtx, id: DownloadId) {
+    ctx.store.set_state(id, haul_engine::DownloadState::Running, None).unwrap();
+}
+
+fn files_in(dir: &Path) -> Vec<String> {
+    let mut v: Vec<String> =
+        std::fs::read_dir(dir).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+    v.sort();
+    v
+}
+
+#[tokio::test]
+async fn finished_file_found_after_crash_completes() {
+    let srv = serve(Spec::new(LEN)).await;
+    let dir = tempfile::tempdir().unwrap();
+    let ctx = ctx_on(Store::open_in_memory().unwrap());
+    let id = add(&ctx, &srv.url, dir.path());
+    let p = completed(run(&ctx, id).await);
+    simulate_crash_after_rename(&ctx, id);
+    let before = srv.requests.load(SeqCst);
+    let again = completed(run(&ctx, id).await);
+    assert_eq!(again, p);
+    assert_eq!(files_in(dir.path()).len(), 1, "{:?}", files_in(dir.path()));
+    assert_eq!(srv.requests.load(SeqCst), before, "downloaded again");
+    assert_eq!(ctx.store.get_download(id).unwrap().state, haul_engine::DownloadState::Completed);
+}
+
+#[tokio::test]
+async fn saved_target_with_wrong_size_downloads_again() {
+    let srv = serve(Spec::new(LEN)).await;
+    let dir = tempfile::tempdir().unwrap();
+    let ctx = ctx_on(Store::open_in_memory().unwrap());
+    let id = add(&ctx, &srv.url, dir.path());
+    let p = completed(run(&ctx, id).await);
+    simulate_crash_after_rename(&ctx, id);
+    std::fs::OpenOptions::new().write(true).open(&p).unwrap().set_len(10).unwrap();
+    let before = srv.requests.load(SeqCst);
+    let again = completed(run(&ctx, id).await);
+    assert_file_eq(&again, LEN);
+    assert!(srv.requests.load(SeqCst) > before);
+}

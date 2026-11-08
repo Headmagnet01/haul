@@ -296,6 +296,12 @@ impl Store {
         Ok(())
     }
 
+    /// Saves where the finished file goes, before the final rename (see `transfer`), or clears it.
+    pub fn set_target_path(&self, id: DownloadId, path: Option<&Path>) -> Result<(), EngineError> {
+        self.lock().execute("UPDATE downloads SET target_path = ?2 WHERE id = ?1", params![id, path.map(path_str)])?;
+        Ok(())
+    }
+
     pub fn set_order(&self, id: DownloadId, p: Priority, position: i64) -> Result<(), EngineError> {
         self.lock().execute(
             "UPDATE downloads SET priority = ?2, position = ?3 WHERE id = ?1",

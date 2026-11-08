@@ -131,6 +131,17 @@ pub async fn run_transfer(job: TransferJob, ctx: &TransferCtx) -> TransferOutcom
     out
 }
 
+/// The row's saved target path when a crash came between the final rename and `set_completed`:
+/// no part file left, and a file of the probed size where the rename put it.
+fn finished_before_crash(d: &crate::store::Download, name: Option<&str>) -> Option<PathBuf> {
+    let target = d.target_path.clone()?;
+    let size = d.probe.as_ref()?.size?;
+    let name = name?;
+    let part_gone = !part_path(&d.target_dir, name, d.id).exists();
+    let len = std::fs::metadata(&target).ok().filter(|m| m.is_file())?.len();
+    (part_gone && len == size).then_some(target)
+}
+
 pub(crate) fn parse_headers(json: Option<&str>) -> HeaderMap {
     let mut h = HeaderMap::new();
     let Some(map) = json.and_then(|j| serde_json::from_str::<HashMap<String, String>>(j).ok()) else {
@@ -260,6 +271,13 @@ async fn transfer(job: &TransferJob, ctx: &TransferCtx) -> Result<Option<PathBuf
     let mut force_sequential = false;
     let mut restarted_416 = false;
 
+    if let Some(done) = finished_before_crash(&d, file_name.as_deref()) {
+        tracing::info!(id, path = %done.display(), "found the finished file from before a crash");
+        ctx.store.set_completed(id, &done)?;
+        ctx.store.save_segments(id, &[])?;
+        return Ok(Some(done));
+    }
+
     loop {
         let fresh = probe_with_retry(ctx, &d.url, &headers, &job.cancel).await?;
         let name = match &file_name {
@@ -363,8 +381,11 @@ async fn transfer(job: &TransferJob, ctx: &TransferCtx) -> Result<Option<PathBuf
                 file.sync_all().map_err(io_error)?;
                 drop(file);
                 let target = reserve_unique_path(&d.target_dir, &name)?;
+                // Saved first, so a crash before `set_completed` finds the file instead of downloading it again.
+                ctx.store.set_target_path(id, Some(&target))?;
                 if let Err(e) = std::fs::rename(&part, &target) {
                     let _ = std::fs::remove_file(&target);
+                    let _ = ctx.store.set_target_path(id, None);
                     return Err(EngineError::Io(e));
                 }
                 let referrer = headers.get(reqwest::header::REFERER).and_then(|v| v.to_str().ok());
