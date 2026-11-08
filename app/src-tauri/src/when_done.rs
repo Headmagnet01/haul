@@ -140,6 +140,13 @@ impl WhenDone {
         self.countdown.cancel();
     }
 
+    /// Waits for these too: the downloads already running or queued when the mode was chosen.
+    pub fn watch(&mut self, ids: impl IntoIterator<Item = DownloadId>) {
+        if self.mode != Mode::Nothing {
+            self.watched.extend(ids);
+        }
+    }
+
     /// The downloads this choice of mode waits for.
     pub fn watched(&self) -> &HashSet<DownloadId> {
         &self.watched

@@ -518,9 +518,20 @@ impl AppCore {
         self.wd().status(Instant::now())
     }
 
+    /// Downloads already moving when the mode is chosen count as work it waits for, so a
+    /// Pause all afterwards doesn't look like "done".
     pub fn set_when_done(&self, mode: Mode) -> Status {
+        let moving: Vec<_> = self
+            .store
+            .list_downloads()
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|d| matches!(d.state, DownloadState::Running | DownloadState::Queued))
+            .map(|d| d.id)
+            .collect();
         let mut w = self.wd();
         w.set_mode(mode);
+        w.watch(moving);
         w.status(Instant::now())
     }
 
@@ -1465,6 +1476,20 @@ mod tests {
         let id = watched_row(&c);
         c.set_when_done(crate::when_done::Mode::Shutdown);
         c.when_done_started(id);
+        c.store.set_state(id, DownloadState::Paused, None).unwrap();
+        assert_eq!(step_past_settle(&c), crate::when_done::Step::Nothing);
+        assert_eq!(c.when_done_status().countdown, None);
+    }
+
+    /// The common flow: downloads already running, then the mode is chosen, then Pause all.
+    #[tokio::test]
+    async fn pause_all_after_choosing_mid_download_does_not_start_countdown() {
+        let dir = tempfile::tempdir().unwrap();
+        let c = core_fake(Store::open_in_memory().unwrap(), dir.path());
+        let id = watched_row(&c);
+        c.store.set_state(id, DownloadState::Running, None).unwrap();
+        c.set_when_done(crate::when_done::Mode::Shutdown);
+        c.when_done_step_at(Instant::now()); // busy: arms the mode
         c.store.set_state(id, DownloadState::Paused, None).unwrap();
         assert_eq!(step_past_settle(&c), crate::when_done::Step::Nothing);
         assert_eq!(c.when_done_status().countdown, None);
