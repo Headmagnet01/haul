@@ -11,9 +11,13 @@ export const VERSION_FILE = 'haul-firefox.version';
 /** web-ext's scratch folder inside `firefox/`; the installer would ship it, so it must be gone. */
 export const SCRATCH = '.signed';
 
+/** Bookkeeping `web-ext sign` saves in the source folder: not extension code, and the next build wipes it. */
+const WEB_EXT_FILES = new Set(['.amo-upload-uuid', '.web-extension-id']);
+
 /** Every file under `dir`, as paths relative to it with `/` separators, sorted. */
 function filesUnder(dir, root = dir) {
   return readdirSync(dir, { withFileTypes: true })
+    .filter((e) => !(dir === root && WEB_EXT_FILES.has(e.name)))
     .flatMap((e) => (e.isDirectory() ? filesUnder(join(dir, e.name), root) : [relative(root, join(dir, e.name)).split(sep).join('/')]))
     .sort();
 }

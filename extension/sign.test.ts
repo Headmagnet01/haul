@@ -76,6 +76,22 @@ test('writes_version_and_hash', async () => {
   expect(existsSync(join(d, 'firefox', '.signed'))).toBe(false);
 });
 
+test('hash_ignores_files_web_ext_leaves_in_the_build', async () => {
+  const d = here();
+  const before = distHash(join(d, 'dist-firefox'));
+  const run = async (_cmd: string, args: string[]) => {
+    if (args.includes('sign')) {
+      // web-ext saves these in --source-dir; the next build wipes them.
+      writeFileSync(join(d, 'dist-firefox', '.amo-upload-uuid'), 'abc');
+      writeFileSync(join(d, 'dist-firefox', '.web-extension-id'), 'haul@x');
+      writeFileSync(join(d, 'firefox', '.signed', 'haul-0.2.0.xpi'), 'signed');
+    }
+    return { status: 0, output: '' };
+  };
+  expect(await signFlow({ here: d, env, run, ...quiet })).toBe(0);
+  expect(readFileSync(join(d, 'firefox', 'haul-firefox.version'), 'utf8')).toBe(`0.2.0\n${before}\n`);
+});
+
 test('missing_key_stops_before_building', async () => {
   const d = here();
   let ran = false;
