@@ -38,6 +38,15 @@ fn notify_tray_hint(app: &tauri::AppHandle) {
 /// Keeps the log writer alive for the life of the app.
 struct LogGuard(#[allow(dead_code)] tracing_appender::non_blocking::WorkerGuard);
 
+/// Held outside the App so a failed `build` (which drops the App and its state) can still log
+/// its reason; `flush_log` drops it, which writes out what is queued.
+static LOG_GUARD: std::sync::Mutex<Option<LogGuard>> = std::sync::Mutex::new(None);
+
+/// Writes out queued log lines; called just before the process exits.
+fn flush_log() {
+    drop(LOG_GUARD.lock().unwrap_or_else(|e| e.into_inner()).take());
+}
+
 fn init_logging(dir: &std::path::Path) -> Option<LogGuard> {
     std::fs::create_dir_all(dir).ok()?;
     let (writer, guard) = tracing_appender::non_blocking(tracing_appender::rolling::daily(dir, "haul.log"));
@@ -126,6 +135,7 @@ fn startup_failure_text(reason: &str, log_dir: Option<&std::path::Path>) -> Stri
 /// Logs the reason, shows it in a Windows message box, and exits: never a silent panic.
 fn fail_to_start(reason: &str) -> ! {
     tracing::error!(%reason, "Haul couldn't start");
+    flush_log();
     let text = startup_failure_text(reason.trim_end_matches('.'), LOG_DIR.get().map(|p| p.as_path()));
     #[cfg(windows)]
     {
@@ -219,7 +229,7 @@ pub fn run() {
             if let Ok(d) = app.path().app_log_dir() {
                 let _ = LOG_DIR.set(d.clone());
                 if let Some(g) = init_logging(&d) {
-                    app.manage(g);
+                    *LOG_GUARD.lock().unwrap_or_else(|e| e.into_inner()) = Some(g);
                 }
             }
             let data_dir = app.path().app_data_dir()?;
@@ -298,6 +308,7 @@ pub fn run() {
             }
             tracing::info!("Haul exiting: saving downloads");
             tauri::async_runtime::block_on(app.state::<AppCore>().shutdown());
+            flush_log();
         }
     });
 }

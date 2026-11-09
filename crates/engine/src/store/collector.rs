@@ -64,13 +64,13 @@ impl Store {
         Ok(())
     }
 
-    /// A link's request headers; a missing link, no headers or a blob that can't be unsealed is `None`.
     /// True while the link is still in the Collector.
     pub fn link_exists(&self, id: i64) -> Result<bool, EngineError> {
         let n: i64 = self.lock().query_row("SELECT COUNT(*) FROM collector_links WHERE id = ?1", [id], |r| r.get(0))?;
         Ok(n > 0)
     }
 
+    /// A link's request headers; a missing link, no headers or a blob that can't be unsealed is `None`.
     pub fn link_headers(&self, id: i64) -> Result<Option<String>, EngineError> {
         let blob: Option<Vec<u8>> = self
             .lock()
