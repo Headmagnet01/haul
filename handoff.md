@@ -29,7 +29,7 @@ A free, open-source Windows download manager. It pairs IDM's fast engine and bro
 | Found 8 Nov: unquoted autostart path | `tauri-plugin-autostart` writes `HKCU\...\Run` `Haul` as `C:\tools\claude for project\target\debug\haul.exe --hidden`, with no quotes. Windows still finds the exe, but it first tries `C:\tools\claude.exe` and `C:\tools\claude for.exe` (the classic unquoted-path weakness: a program planted there would run at sign-in). Fix in 6b, test-first: write the Run value with the exe path in quotes (directly, or a plugin option if one exists), and check an installed build's path. |
 | Plan 7 (9 Nov) | Firefox add-on and the schedule fix, merged (see "Plan 7"). Signed by Mozilla (unlisted, 0.1.0) on 9 Nov; installer rebuilt with it (SHA-256 81b669de…c22c) and installed; the owner reported the Firefox hand checks done. |
 | Owner checks on 0.2.0 (9 Nov) | Passed: a Chrome click reaches Haul (Edge skipped by the owner; same build); sign out and in with Start with Windows on (closes the 6b check); Firefox add-on updated to 0.2.0. Signing secret re-saved without the stray character (64). |
-| Next | Code signing (SmartScreen), the Plan 8 deferred minors. |
+| Next | Store listings (Chrome Web Store, $5 once, also serves Brave/Vivaldi/Edge; Firefox Add-ons listed, free). With the next extension release: `extension/src/browser.ts` `browserName` names Brave, Opera and Vivaldi "Chromium" (it only knows the Edge and Chrome brands), so two such browsers on the same unpacked origin can replace each other's pairing; recognise their brands, test-first. Later: code signing (SmartScreen), the Plan 8 deferred minors. |
 
 ## The app, and how to run it
 - **Real app:** `cd app` and `npx tauri dev`. The window is titled Haul, 1280×800 by default.
