@@ -1,6 +1,6 @@
 # Haul: handoff
 
-Last updated: 9 Nov 2026. Plans 1–5, 6a, 6b, 7 and **8 (the clean-up pass)** are merged into `master`, and **0.2.0** is built and installed (see "Release 0.2.0") (8 fast-forwarded from `feat/cleanup` after the review fix pass and the hand checks). See "Plan 8" below.
+Last updated: 9 Nov 2026. Plans 1–5, 6a, 6b, 7 and **8 (the clean-up pass)** are merged into `master`, (8 fast-forwarded from `feat/cleanup` after the review fix pass and the hand checks). **Public on GitHub** at https://github.com/Headmagnet01/haul with release **v0.2.1** (see "Release 0.2.1").
 
 **Plan 6a: all 9 tasks done and the review's fix pass done** merged into `master` (branch `feat/app-shell` deleted). Spec `docs/superpowers/specs/2026-11-08-haul-plan-6a-app-shell-design.md`, plan `docs/superpowers/plans/2026-11-08-haul-plan-6a-app-shell.md`; the executor ledger (every ruling) is kept at `docs/superpowers/plans/2026-11-08-haul-plan-6a-app-shell.ledger.md`. Built: `finished_at` + a 5 s speed window, the Settings record and page, tray / close to tray / single instance / autostart, the Finished view, When done with a countdown, toasts with Open folder, and a first-run welcome. **Next: Plan 6b** (packaging and the rest of Plan 6).
 
@@ -14,7 +14,7 @@ A free, open-source Windows download manager. It pairs IDM's fast engine and bro
 ## Where things stand
 | | |
 |---|---|
-| Branch | `master` holds everything through Plan 8 (branch `feat/cleanup` merged and deleted). No Git remote exists. |
+| Branch | `master` holds everything through Plan 8 (branch `feat/cleanup` merged and deleted). Remote `origin` = https://github.com/Headmagnet01/haul (public; only `master` is pushed, the old local `feat/*` branches stay local). |
 | Plan 6b (8–9 Nov) | Merged. Done: dev/release identifiers, quoted autostart module, Collector captures keep cookies (I5), daily update check + UI, per-user NSIS installer. Rust 428 tests, front end 111 Vitest + 170 Playwright. Installer built and installed by the owner to `C:\tools\Haul`; checks 1–4, 6 and 7 (uninstall) passed; after the review fix pass the rebuilt installer was installed over it the uninstall-first way and Haul restored its startup entry with the switch still on. **Still open:** autostart after a real sign-in. Final review: 3 Important fixed test-first (upgrade turned autostart off; dev builds shared the Run value; `picker.html` unchecked). 6b deferred minors: a failed daily check clears a found update; a restart can hide it up to 24 h; openRelease failures are silent; a re-capture can race the running probe; a wrong-typed StartupApproved value makes enable fail; `safe_release_url` accepts `..` segments (still github.com). |
 | Done | Plans 1–5 merged. Plan 5: `docs/superpowers/plans/2026-11-08-haul-plan-5-browser-extension.md`, Tasks 1–10, design in `docs/superpowers/specs/2026-11-08-haul-browser-extension-design.md`. |
 | Tests (8 Nov, Plan 6a after the fix pass) | Rust: 380 tests. Front end: 105 Vitest, 160 Playwright e2e runs (light and dark). Clippy, rustfmt and svelte-check are clean. Real-app smoke 6/6, including `close_keeps_downloading` and `second_launch_shows_first`. **Engine timing flakes predate 6a** (measured: `master` failed 3 of 4 engine-only runs, the branch 1 of 6): `crash_simulation`, `speed_limit_respected`, `slow_connection_replaced`, `stalled_connections_replaced`, `restart_resumes_interrupted` fail now and then under load and pass alone. Rerun before believing one. |
@@ -29,7 +29,7 @@ A free, open-source Windows download manager. It pairs IDM's fast engine and bro
 | Found 8 Nov: unquoted autostart path | `tauri-plugin-autostart` writes `HKCU\...\Run` `Haul` as `C:\tools\claude for project\target\debug\haul.exe --hidden`, with no quotes. Windows still finds the exe, but it first tries `C:\tools\claude.exe` and `C:\tools\claude for.exe` (the classic unquoted-path weakness: a program planted there would run at sign-in). Fix in 6b, test-first: write the Run value with the exe path in quotes (directly, or a plugin option if one exists), and check an installed build's path. |
 | Plan 7 (9 Nov) | Firefox add-on and the schedule fix, merged (see "Plan 7"). Signed by Mozilla (unlisted, 0.1.0) on 9 Nov; installer rebuilt with it (SHA-256 81b669de…c22c) and installed; the owner reported the Firefox hand checks done. |
 | Owner checks on 0.2.0 (9 Nov) | Passed: a Chrome click reaches Haul (Edge skipped by the owner; same build); sign out and in with Start with Windows on (closes the 6b check); Firefox add-on updated to 0.2.0. Signing secret re-saved without the stray character (64). |
-| Next | A GitHub repository (`Headmagnet01/haul`) and the v0.2.0 release, code signing, the Plan 8 deferred minors. |
+| Next | Code signing (SmartScreen), the Plan 8 deferred minors. |
 
 ## The app, and how to run it
 - **Real app:** `cd app` and `npx tauri dev`. The window is titled Haul, 1280×800 by default.
@@ -53,7 +53,15 @@ A free, open-source Windows download manager. It pairs IDM's fast engine and bro
   - `src/lib/`: pure TypeScript, unit-tested: format, status, strip, model (list building, updates, moves and drops), speeds, keys and sparkline. It also holds `backend*.ts` (the interface, Tauri and the mock) and `app-state.svelte.ts` (all Queue state).
   - `src/components/`: the Svelte views.
 
-## Release 0.2.0 (9 Nov 2026)
+## Release 0.2.1, public (9 Nov 2026)
+- **Owner decisions:** the repository lives under the GitHub account **Headmagnet01** (not meraaki410), public; commit author email left as it is.
+- The update feed, release URL and `safe_release_url`'s path rule now point at `Headmagnet01/haul` (`baef887`); installed 0.2.0 copies still ask `meraaki410/haul` and find nothing, so 0.2.0 was never published. The Firefox add-on ID stays `haul@meraaki410.github.io` (Mozilla ties signed versions to it; it is only a name).
+- 0.2.1 changes only the app; the extension and its signed `.xpi` stay 0.2.0. Gate green (`crash_simulation` failed once, 3/3 alone). README added.
+- Pre-publish scan of all 181 commits: no keys, tokens, private keys or user-folder paths.
+- Release https://github.com/Headmagnet01/haul/releases/tag/v0.2.1 with `Haul_0.2.1_x64-setup.exe` (7,307,094 bytes), SHA-256 `e7b11714564ad5d2f25eb2583bca14d245ae251f8e50da9fbfda2e6a448b10ca`, matching GitHub's digest and a re-download. `api.github.com/repos/Headmagnet01/haul/releases/latest` answers `v0.2.1`.
+- Each future release: tag `v<version>` on `master`, attach the installer, SHA-256 in the notes (`docs/release-checklist.md` step 7).
+
+## Release 0.2.0 (9 Nov 2026, local only)
 - App and extension raised to 0.2.0 (`c5d5fa4`). Gate green: Rust workspace, clippy, fmt; app Vitest 125, svelte-check, Playwright 180; extension 77.
 - Firefox add-on 0.2.0 signed by Mozilla (unlisted). The saved `WEB_EXT_API_SECRET` again has a stray whitespace character (65 characters, 64 trimmed): Mozilla answers "Error decoding signature" until it is trimmed. This run trimmed it in the shell only; fix the saved variable.
 - Found and fixed (`b33c852`, test-first): `web-ext sign` saves `.amo-upload-uuid` in `dist-firefox`, so the hash `sign.mjs` saved included it and `check-release` refused the fresh add-on once the release build wiped the file. `distHash` now skips web-ext's two bookkeeping files. The signed `.xpi`'s code matched the build file for file, so its `.version` hash was rewritten rather than signing 0.2.1.
