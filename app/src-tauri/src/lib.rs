@@ -225,77 +225,10 @@ pub fn run() {
                 }
             }
         })
+        // Tauri runs setup inside `run`, and panics on an Err there: catch it here instead.
         .setup(|app| {
-            if let Ok(d) = app.path().app_log_dir() {
-                let _ = LOG_DIR.set(d.clone());
-                if let Some(g) = init_logging(&d) {
-                    *LOG_GUARD.lock().unwrap_or_else(|e| e.into_inner()) = Some(g);
-                }
-            }
-            let data_dir = app.path().app_data_dir()?;
-            let download_dir =
-                app.path().download_dir().or_else(|_| app.path().home_dir().map(|h| h.join("Downloads")))?;
-            let db = data_dir.join("haul.db");
-            let notifier = app.handle().clone();
-            let deps = AppCore::real_deps(seven_zip_path(app), move |n| {
-                let on = notifier.try_state::<AppCore>().is_none_or(|c| c.settings().notify_finished);
-                if crate::toast::should_show(&n, on) {
-                    crate::toast::show(&notifier, crate::toast::toast_for(&n));
-                } else {
-                    tracing::info!(title = %n.title, "notification off");
-                }
-            });
-            let core = tauri::async_runtime::block_on(async { AppCore::start(&db, download_dir, deps) })?;
-            let handle = app.handle().clone();
-            let events = core.events();
-            tauri::async_runtime::block_on(async move {
-                crate::bridge::spawn_forwarder(events, Duration::from_millis(250), move |u| {
-                    let _ = handle.emit("haul:update", u);
-                });
-            });
-            tracing::info!(db = %db.display(), "Haul started");
-            if let Err(e) = crate::clipboard::spawn_watcher(core.clone()) {
-                tracing::warn!(error = %e, "clipboard watcher not started");
-            }
-            let gate = PairGate::new(PAIR_TIMEOUT);
-            let window = app.handle().clone();
-            let on_pair: OnPair = Arc::new(move |ev| match ev {
-                PairEvent::Asked { n, browser } => {
-                    if let Some(w) = window.get_webview_window("main") {
-                        let _ = w.unminimize();
-                        let _ = w.show();
-                        let _ = w.set_focus();
-                    }
-                    let _ = window.emit("haul:pair-request", serde_json::json!({ "n": n, "browser": browser }));
-                }
-                PairEvent::Closed { n } => {
-                    let _ = window.emit("haul:pair-closed", serde_json::json!({ "n": n }));
-                }
-            });
-            let port_file = data_dir.join("api-port");
-            let (c, g) = (core.clone(), gate.clone());
-            match tauri::async_runtime::block_on(async move {
-                start_api(c, g, on_pair, DEFAULT_PORTS, Some(port_file)).await
-            }) {
-                Ok(api) => {
-                    app.manage(api);
-                }
-                Err(e) => tracing::warn!(error = %e, "local API not started; the browser extension can't reach Haul"),
-            }
-            if let Err(e) = crate::tray::build_tray(app.handle(), &core) {
-                tracing::warn!(error = %e, "tray icon not created");
-            }
-            spawn_when_done(app.handle().clone(), core.clone());
-            repair_autostart(&core, &app.config().identifier);
-            let updater = crate::update::Updater::new(crate::update::FEED, env!("CARGO_PKG_VERSION"));
-            updater.load_found(&core.store);
-            app.manage(updater);
-            crate::update::spawn_loop(app.handle().clone(), core.clone());
-            app.manage(gate);
-            app.manage(core);
-            let args: Vec<String> = std::env::args().collect();
-            if !crate::tray::starts_hidden(&args) {
-                crate::tray::show_main(app.handle());
+            if let Err(e) = setup(app) {
+                fail_to_start(&e.to_string());
             }
             Ok(())
         })
@@ -311,6 +244,80 @@ pub fn run() {
             flush_log();
         }
     });
+}
+
+/// Starts logging, the engine, the local API, the tray and the update check.
+fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
+    if let Ok(d) = app.path().app_log_dir() {
+        let _ = LOG_DIR.set(d.clone());
+        if let Some(g) = init_logging(&d) {
+            *LOG_GUARD.lock().unwrap_or_else(|e| e.into_inner()) = Some(g);
+        }
+    }
+    let data_dir = app.path().app_data_dir()?;
+    let download_dir = app.path().download_dir().or_else(|_| app.path().home_dir().map(|h| h.join("Downloads")))?;
+    let db = data_dir.join("haul.db");
+    let notifier = app.handle().clone();
+    let deps = AppCore::real_deps(seven_zip_path(app), move |n| {
+        let on = notifier.try_state::<AppCore>().is_none_or(|c| c.settings().notify_finished);
+        if crate::toast::should_show(&n, on) {
+            crate::toast::show(&notifier, crate::toast::toast_for(&n));
+        } else {
+            tracing::info!(title = %n.title, "notification off");
+        }
+    });
+    let core = tauri::async_runtime::block_on(async { AppCore::start(&db, download_dir, deps) })?;
+    let handle = app.handle().clone();
+    let events = core.events();
+    tauri::async_runtime::block_on(async move {
+        crate::bridge::spawn_forwarder(events, Duration::from_millis(250), move |u| {
+            let _ = handle.emit("haul:update", u);
+        });
+    });
+    tracing::info!(db = %db.display(), "Haul started");
+    if let Err(e) = crate::clipboard::spawn_watcher(core.clone()) {
+        tracing::warn!(error = %e, "clipboard watcher not started");
+    }
+    let gate = PairGate::new(PAIR_TIMEOUT);
+    let window = app.handle().clone();
+    let on_pair: OnPair = Arc::new(move |ev| match ev {
+        PairEvent::Asked { n, browser } => {
+            if let Some(w) = window.get_webview_window("main") {
+                let _ = w.unminimize();
+                let _ = w.show();
+                let _ = w.set_focus();
+            }
+            let _ = window.emit("haul:pair-request", serde_json::json!({ "n": n, "browser": browser }));
+        }
+        PairEvent::Closed { n } => {
+            let _ = window.emit("haul:pair-closed", serde_json::json!({ "n": n }));
+        }
+    });
+    let port_file = data_dir.join("api-port");
+    let (c, g) = (core.clone(), gate.clone());
+    match tauri::async_runtime::block_on(async move { start_api(c, g, on_pair, DEFAULT_PORTS, Some(port_file)).await })
+    {
+        Ok(api) => {
+            app.manage(api);
+        }
+        Err(e) => tracing::warn!(error = %e, "local API not started; the browser extension can't reach Haul"),
+    }
+    if let Err(e) = crate::tray::build_tray(app.handle(), &core) {
+        tracing::warn!(error = %e, "tray icon not created");
+    }
+    spawn_when_done(app.handle().clone(), core.clone());
+    repair_autostart(&core, &app.config().identifier);
+    let updater = crate::update::Updater::new(crate::update::FEED, env!("CARGO_PKG_VERSION"));
+    updater.load_found(&core.store);
+    app.manage(updater);
+    crate::update::spawn_loop(app.handle().clone(), core.clone());
+    app.manage(gate);
+    app.manage(core);
+    let args: Vec<String> = std::env::args().collect();
+    if !crate::tray::starts_hidden(&args) {
+        crate::tray::show_main(app.handle());
+    }
+    Ok(())
 }
 
 #[cfg(test)]
