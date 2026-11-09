@@ -1,6 +1,6 @@
 # Haul: handoff
 
-Last updated: 9 Nov 2026. Plans 1–5, 6a, 6b and **7 (Firefox add-on, own pause beats the schedule)** are merged into `master` (7 fast-forwarded from `feat/firefox` after the final review's fix pass). See "Plan 7" below.
+Last updated: 9 Nov 2026. Plans 1–5, 6a, 6b and **7 (Firefox add-on, own pause beats the schedule)** are merged into `master` (7 fast-forwarded from `feat/firefox` after the final review's fix pass). See "Plan 7" below. **Plan 8 (clean-up pass)** is done on `feat/cleanup` and not merged yet: see "Plan 8".
 
 **Plan 6a: all 9 tasks done and the review's fix pass done** merged into `master` (branch `feat/app-shell` deleted). Spec `docs/superpowers/specs/2026-11-08-haul-plan-6a-app-shell-design.md`, plan `docs/superpowers/plans/2026-11-08-haul-plan-6a-app-shell.md`; the executor ledger (every ruling) is kept at `docs/superpowers/plans/2026-11-08-haul-plan-6a-app-shell.ledger.md`. Built: `finished_at` + a 5 s speed window, the Settings record and page, tray / close to tray / single instance / autostart, the Finished view, When done with a countdown, toasts with Open folder, and a first-run welcome. **Next: Plan 6b** (packaging and the rest of Plan 6).
 
@@ -51,6 +51,20 @@ A free, open-source Windows download manager. It pairs IDM's fast engine and bro
     - `commands.rs` and `lib.rs`: Tauri glue.
   - `src/lib/`: pure TypeScript, unit-tested: format, status, strip, model (list building, updates, moves and drops), speeds, keys and sparkline. It also holds `backend*.ts` (the interface, Tauri and the mock) and `app-state.svelte.ts` (all Queue state).
   - `src/components/`: the Svelte views.
+
+## Plan 8: the clean-up pass (9 Nov 2026)
+- **Docs:** spec `docs/superpowers/specs/2026-11-09-haul-plan-8-cleanup-design.md`, plan `docs/superpowers/plans/2026-11-09-haul-plan-8-cleanup.md`. Built on `feat/cleanup` in the worktree `.claude/worktrees/plan8`, from `master` d98ae5e. The executor ledger (every ruling) is `.superpowers/sdd/2026-11-09-haul-plan-8-cleanup/progress.md` in that worktree (git-ignored).
+- **What it fixed:** most of the deferred minors from Plans 6a, 6b and 7, in six tasks, each test-first.
+  - Task 1: the flaky Collector capture test waits for post-processing; the Edge real test expects Finished.
+  - Task 2: When done waits for the downloads that ran; a checksum mismatch blocks it; Do it now only acts during the countdown; no work every second with Nothing chosen.
+  - Task 3: a crash between the final rename and Completed doesn't download again; a hand pause as the schedule window closes stays paused; `secure_delete` on; "in use" recognised in the Recycle Bin's wording.
+  - Task 4: a found update survives a failed check and a restart; stricter release URLs; Open release says when it fails; a failed sign leaves nothing to bundle; `check-release` spots code changed since signing; a wrong-typed Task Manager mark no longer breaks autostart.
+  - Task 5: failed actions say so and put things back; number fields refuse bad input; a finished toast with auto post-processing off; toasts filtered by kind; Enter in a select doesn't start the Collector; the unused opener permission is gone; a startup failure shows a message box with the reason and the log folder.
+  - Task 6: browser names lose control characters; the api-port file is removed on quit; the clipboard watcher ignores copies password managers mark private; a removed Collector link is never checked and a newer recheck wins; Firefox cookies are sent under first-party isolation.
+- **Final review (9 Nov):** a fresh reviewer: 1 Critical, 1 Important, 7 Minor. Fixed test-first: re-pairing one Chromium browser revoked another that shared the unpacked origin (now replaced by origin + browser); When done fired after Pause all when downloads were moving before the mode was chosen; the clipboard history DWORD was read without a size check (re-graded Important: unsafe code). Also fixed: the log writer is now held in a static, so a startup failure's reason reaches the log before the box shows; `link_exists`'s doc comment.
+- **Plan 8 deferred minors:** `clean_browser_name` lets Unicode format characters (bidi overrides, zero-width) through; the grabber's `probe_gen` map never shrinks; "<name> finished" only for a brand-new held run (a restarted download with an existing run gets none); a found update is saved without its check time (no effect on behaviour).
+- **Next release:** the extension changed (6e), and `check-release` now refuses the 0.1.0 `.version` file, which has no hash line. Raise `version` in `extension/static/manifest.json` and run `npm run sign:firefox` before `npm run release`.
+- **Owner hand checks still open:** the startup box (rename the dev `haul.db`, put an empty folder named `haul.db` in its place, run `tauri dev`, see the box, then restore); a copy from a password manager with Watch clipboard on isn't picked up; with the installed Haul quit, `npx playwright test -c playwright.real.config.ts` in `app/` (range server + `tauri dev` on port 9222).
 
 ## Plan 7: Firefox, and your own pause beats the schedule (9 Nov 2026)
 - **Docs:** spec `docs/superpowers/specs/2026-11-09-haul-plan-7-firefox-design.md`, plan `docs/superpowers/plans/2026-11-09-haul-plan-7-firefox.md`, ledger (every ruling) `docs/superpowers/plans/2026-11-09-haul-plan-7-firefox.ledger.md`. Built on `feat/firefox` in a worktree, fast-forwarded into `master` and deleted.

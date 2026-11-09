@@ -42,7 +42,7 @@ Every release, when the extension changed: raise `version` in `extension/static/
 npm run sign:firefox
 ```
 
-It builds, uploads the Firefox build as an unlisted add-on, and saves `extension/firefox/haul-firefox.xpi` and `haul-firefox.version`. The installer build refuses to bundle a missing `.xpi` or one whose version differs from the manifest (`check-release.mjs`, run as Tauri's `beforeBundleCommand`). The extension didn't change? Keep the signed `.xpi` you have.
+It builds, uploads the Firefox build as an unlisted add-on, and saves `extension/firefox/haul-firefox.xpi` and `haul-firefox.version`. The installer build refuses to bundle a missing `.xpi` or one whose version differs from the manifest (`check-release.mjs`, run as Tauri's `beforeBundleCommand`). The extension didn't change? Keep the signed `.xpi` you have. Since Plan 8 the `.version` file must carry a hash of the build it was signed from; the 0.1.0 one has none, so the first release after Plan 8 must raise the version and sign again.
 
 The known engine timing flakes (see `handoff.md`) are rerun alone before they are believed.
 
