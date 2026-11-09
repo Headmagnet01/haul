@@ -1,6 +1,6 @@
 # Haul: handoff
 
-Last updated: 9 Nov 2026. Plans 1–5, 6a, 6b, 7 and **8 (the clean-up pass)** are merged into `master` (8 fast-forwarded from `feat/cleanup` after the review fix pass and the hand checks). See "Plan 8" below.
+Last updated: 9 Nov 2026. Plans 1–5, 6a, 6b, 7 and **8 (the clean-up pass)** are merged into `master`, and **0.2.0** is built and installed (see "Release 0.2.0") (8 fast-forwarded from `feat/cleanup` after the review fix pass and the hand checks). See "Plan 8" below.
 
 **Plan 6a: all 9 tasks done and the review's fix pass done** merged into `master` (branch `feat/app-shell` deleted). Spec `docs/superpowers/specs/2026-11-08-haul-plan-6a-app-shell-design.md`, plan `docs/superpowers/plans/2026-11-08-haul-plan-6a-app-shell.md`; the executor ledger (every ruling) is kept at `docs/superpowers/plans/2026-11-08-haul-plan-6a-app-shell.ledger.md`. Built: `finished_at` + a 5 s speed window, the Settings record and page, tray / close to tray / single instance / autostart, the Finished view, When done with a countdown, toasts with Open folder, and a first-run welcome. **Next: Plan 6b** (packaging and the rest of Plan 6).
 
@@ -28,7 +28,7 @@ A free, open-source Windows download manager. It pairs IDM's fast engine and bro
 | Plan 6a deferred minors | In-use check misses "in use by another process"; `when_done_step` reads all downloads every second even with Nothing; Pause all with Shut down chosen starts the countdown; a failed checksum run doesn't block When done; Do it now doesn't re-check for work started a moment earlier; the autostart switch can drift from the registry and a `--hidden` launch while open still shows the window; Settings number fields (empty becomes 1, 2.5 shows serde's text); no "<name> finished" toast with auto post-processing off; toast filtering keys on title wording; `core:window:allow-close` ships in the production capability. |
 | Found 8 Nov: unquoted autostart path | `tauri-plugin-autostart` writes `HKCU\...\Run` `Haul` as `C:\tools\claude for project\target\debug\haul.exe --hidden`, with no quotes. Windows still finds the exe, but it first tries `C:\tools\claude.exe` and `C:\tools\claude for.exe` (the classic unquoted-path weakness: a program planted there would run at sign-in). Fix in 6b, test-first: write the Run value with the exe path in quotes (directly, or a plugin option if one exists), and check an installed build's path. |
 | Plan 7 (9 Nov) | Firefox add-on and the schedule fix, merged (see "Plan 7"). Signed by Mozilla (unlisted, 0.1.0) on 9 Nov; installer rebuilt with it (SHA-256 81b669de…c22c) and installed; the owner reported the Firefox hand checks done. |
-| Next | One open 6b check: sign out and in with Start with Windows on (Haul should be in the tray, window hidden, process started with `--hidden`). Then: sign the Firefox add-on, code signing, the 6a, 6b and 7 deferred minors. |
+| Next | Owner checks on the installed 0.2.0: an Edge click reaches Haul; sign out and in with Start with Windows on (Haul in the tray, window hidden, started with `--hidden`); update the Firefox add-on to 0.2.0 by dragging `C:	ools\Haulirefox\haul-firefox.xpi` onto Firefox. Then: a GitHub repository (`meraaki410/haul`) and the v0.2.0 release, code signing, the Plan 8 deferred minors. |
 
 ## The app, and how to run it
 - **Real app:** `cd app` and `npx tauri dev`. The window is titled Haul, 1280×800 by default.
@@ -51,6 +51,14 @@ A free, open-source Windows download manager. It pairs IDM's fast engine and bro
     - `commands.rs` and `lib.rs`: Tauri glue.
   - `src/lib/`: pure TypeScript, unit-tested: format, status, strip, model (list building, updates, moves and drops), speeds, keys and sparkline. It also holds `backend*.ts` (the interface, Tauri and the mock) and `app-state.svelte.ts` (all Queue state).
   - `src/components/`: the Svelte views.
+
+## Release 0.2.0 (9 Nov 2026)
+- App and extension raised to 0.2.0 (`c5d5fa4`). Gate green: Rust workspace, clippy, fmt; app Vitest 125, svelte-check, Playwright 180; extension 77.
+- Firefox add-on 0.2.0 signed by Mozilla (unlisted). The saved `WEB_EXT_API_SECRET` again has a stray whitespace character (65 characters, 64 trimmed): Mozilla answers "Error decoding signature" until it is trimmed. This run trimmed it in the shell only; fix the saved variable.
+- Found and fixed (`b33c852`, test-first): `web-ext sign` saves `.amo-upload-uuid` in `dist-firefox`, so the hash `sign.mjs` saved included it and `check-release` refused the fresh add-on once the release build wiped the file. `distHash` now skips web-ext's two bookkeeping files. The signed `.xpi`'s code matched the build file for file, so its `.version` hash was rewritten rather than signing 0.2.1.
+- Installer `targeteleaseundle
+sis\Haul_0.2.0_x64-setup.exe` (6.97 MiB), SHA-256 `51eeb86a43138a4864395ba28a932eecd15ccfd309308e80bfd9a7f401e4d4dd`. Installed over 0.1.0 the uninstall-first way into `C:	ools\Haul`: data kept, Start menu entry back, Run value `"C:	ools\Haul\haul.exe" --hidden` restored at start, log "Haul started" on the real DB, API on 17654.
+- Not published: no Git remote exists yet.
 
 ## Plan 8: the clean-up pass (9 Nov 2026)
 - **Docs:** spec `docs/superpowers/specs/2026-11-09-haul-plan-8-cleanup-design.md`, plan `docs/superpowers/plans/2026-11-09-haul-plan-8-cleanup.md`. Built on `feat/cleanup` in a worktree from `master` d98ae5e, fast-forwarded into `master` and deleted. Ledger (every ruling): `docs/superpowers/plans/2026-11-09-haul-plan-8-cleanup.ledger.md`.
