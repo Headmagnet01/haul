@@ -12,8 +12,12 @@ export async function browserName(runtime: RuntimeLike, nav: Navigator): Promise
       // Fall through to the Chromium check.
     }
   }
-  const brands = (nav as Navigator & { userAgentData?: { brands: { brand: string }[] } }).userAgentData?.brands ?? [];
-  if (brands.some((b) => b.brand === 'Microsoft Edge')) return 'Microsoft Edge';
-  if (brands.some((b) => b.brand === 'Google Chrome')) return 'Google Chrome';
+  const n = nav as Navigator & { userAgentData?: { brands: { brand: string }[] }; brave?: unknown };
+  const brands = n.userAgentData?.brands ?? [];
+  const has = (name: string) => brands.some((b) => b.brand === name);
+  // Brave and Opera list Chromium (and sometimes Google Chrome) too, so they are checked first.
+  if (has('Brave') || n.brave) return 'Brave';
+  for (const name of ['Opera GX', 'Opera', 'Microsoft Edge', 'Google Chrome']) if (has(name)) return name;
+  // Vivaldi and others report no brand of their own.
   return 'Chromium';
 }
