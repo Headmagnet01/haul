@@ -2,7 +2,7 @@ import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Page } from '@playwright/test';
 
 const calls = (page: Page) => page.evaluate(() => (window as unknown as { __haulMockCalls: string[] }).__haulMockCalls);
-const TAG = 'https://github.com/meraaki410/haul/releases/tag/v0.2.0';
+const TAG = 'https://github.com/Headmagnet01/haul/releases/tag/v0.2.0';
 
 async function openSettings(page: Page) {
   await page.getByRole('navigation', { name: 'Views' }).getByRole('button', { name: 'Settings' }).click();

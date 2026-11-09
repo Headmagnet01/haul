@@ -92,4 +92,4 @@ Settings › Apps › Installed apps › Haul › Uninstall. Afterwards Haul is 
 
 ## 7. Publish
 
-Create a GitHub release on `meraaki410/haul` tagged `v<version>` (for example `v0.2.0`; a tag with `-beta` is ignored by the update check). Attach the installer and put its SHA-256 in the notes. Installed copies of Haul notice the new release within a day.
+Create a GitHub release on `Headmagnet01/haul` tagged `v<version>` (for example `v0.2.0`; a tag with `-beta` is ignored by the update check). Attach the installer and put its SHA-256 in the notes. Installed copies of Haul notice the new release within a day.

@@ -134,7 +134,7 @@ export function createMockBackend(
   const viewListeners = new Set<(view: string) => void>();
   const updateListeners = new Set<(u: { version: string; url: string }) => void>();
   // The app is 0.1.0; `update` (`?update=0.2.0`) stands in for a newer release on GitHub.
-  const tagUrl = (v: string) => `https://github.com/meraaki410/haul/releases/tag/v${v}`;
+  const tagUrl = (v: string) => `https://github.com/Headmagnet01/haul/releases/tag/v${v}`;
   let update: UpdateStatus = {
     current: '0.1.0', latest: opts.update ?? null, url: opts.update ? tagUrl(opts.update) : null, checkedAt: null, error: null,
   };

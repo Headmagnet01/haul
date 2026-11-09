@@ -10,9 +10,9 @@ use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
 use std::time::Duration;
 
-pub const FEED: &str = "https://api.github.com/repos/meraaki410/haul/releases/latest";
+pub const FEED: &str = "https://api.github.com/repos/Headmagnet01/haul/releases/latest";
 /// Where "Update available" goes when GitHub's reply names no page of ours.
-pub const RELEASES: &str = "https://github.com/meraaki410/haul/releases";
+pub const RELEASES: &str = "https://github.com/Headmagnet01/haul/releases";
 const TIMEOUT: Duration = Duration::from_secs(15);
 const EVERY: chrono::TimeDelta = chrono::TimeDelta::hours(24);
 
@@ -41,7 +41,7 @@ pub fn is_newer(current: &str, tag: &str) -> bool {
 
 /// `html_url` when it is a page under Haul's own releases, else the releases page. The URL is
 /// parsed (so `..` and `%2e%2e` are resolved) and must be https on exactly github.com, with no
-/// user name, under `/meraaki410/haul/releases/`.
+/// user name, under `/Headmagnet01/haul/releases/`.
 pub fn safe_release_url(html_url: Option<&str>) -> String {
     let ours = |raw: &str| {
         let u = reqwest::Url::parse(raw).ok()?;
@@ -50,7 +50,7 @@ pub fn safe_release_url(html_url: Option<&str>) -> String {
             && u.port().is_none()
             && u.username().is_empty()
             && u.password().is_none()
-            && u.path().starts_with("/meraaki410/haul/releases/");
+            && u.path().starts_with("/Headmagnet01/haul/releases/");
         ok.then(|| u.to_string())
     };
     html_url.and_then(ours).unwrap_or_else(|| RELEASES.to_string())
@@ -246,7 +246,7 @@ mod tests {
     use chrono::Duration as Days;
     use std::sync::{Arc, Mutex as StdMutex};
 
-    const TAG_URL: &str = "https://github.com/meraaki410/haul/releases/tag/v0.2.0";
+    const TAG_URL: &str = "https://github.com/Headmagnet01/haul/releases/tag/v0.2.0";
 
     #[test]
     fn newer_versions_table() {
@@ -262,13 +262,13 @@ mod tests {
 
     #[test]
     fn foreign_url_falls_back() {
-        assert_eq!(safe_release_url(Some("https://evil.example/x")), "https://github.com/meraaki410/haul/releases");
+        assert_eq!(safe_release_url(Some("https://evil.example/x")), "https://github.com/Headmagnet01/haul/releases");
         assert_eq!(safe_release_url(Some(TAG_URL)), TAG_URL);
-        assert_eq!(safe_release_url(None), "https://github.com/meraaki410/haul/releases");
+        assert_eq!(safe_release_url(None), "https://github.com/Headmagnet01/haul/releases");
         // A look-alike repository name is not ours.
         assert_eq!(
-            safe_release_url(Some("https://github.com/meraaki410/haul-evil/releases/x")),
-            "https://github.com/meraaki410/haul/releases"
+            safe_release_url(Some("https://github.com/Headmagnet01/haul-evil/releases/x")),
+            "https://github.com/Headmagnet01/haul/releases"
         );
     }
 
@@ -301,7 +301,8 @@ mod tests {
         (url, seen)
     }
 
-    const NEWER: &str = r#"{"tag_name":"v0.2.0","html_url":"https://github.com/meraaki410/haul/releases/tag/v0.2.0"}"#;
+    const NEWER: &str =
+        r#"{"tag_name":"v0.2.0","html_url":"https://github.com/Headmagnet01/haul/releases/tag/v0.2.0"}"#;
 
     #[tokio::test]
     async fn newer_release_reported() {
@@ -463,11 +464,11 @@ mod tests {
     #[test]
     fn release_url_cannot_climb() {
         for bad in [
-            "https://github.com/meraaki410/haul/releases/../../evil",
-            "https://github.com/meraaki410/haul/releases/%2e%2e/%2e%2e/evil",
-            "https://github.com.evil.io/meraaki410/haul/releases/x",
-            "https://github.com@evil.io/meraaki410/haul/releases/x",
-            "http://github.com/meraaki410/haul/releases/x",
+            "https://github.com/Headmagnet01/haul/releases/../../evil",
+            "https://github.com/Headmagnet01/haul/releases/%2e%2e/%2e%2e/evil",
+            "https://github.com.evil.io/Headmagnet01/haul/releases/x",
+            "https://github.com@evil.io/Headmagnet01/haul/releases/x",
+            "http://github.com/Headmagnet01/haul/releases/x",
         ] {
             assert_eq!(safe_release_url(Some(bad)), RELEASES, "{bad}");
         }

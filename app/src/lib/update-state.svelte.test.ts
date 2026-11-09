@@ -3,7 +3,7 @@ import { createMockBackend } from './backend-mock';
 import { createUpdateState } from './update-state.svelte';
 
 const flush = () => new Promise((r) => setTimeout(r, 0));
-const TAG = 'https://github.com/meraaki410/haul/releases/tag/v0.2.0';
+const TAG = 'https://github.com/Headmagnet01/haul/releases/tag/v0.2.0';
 
 test('up_to_date_message', async () => {
   const b = createMockBackend({ tickMs: 60_000, demo: false });
@@ -54,7 +54,7 @@ test('update_event_sets_latest', async () => {
   b.updateAvailable('0.3.0');
   await flush();
   expect(u.status?.latest).toBe('0.3.0');
-  expect(u.status?.url).toBe('https://github.com/meraaki410/haul/releases/tag/v0.3.0');
+  expect(u.status?.url).toBe('https://github.com/Headmagnet01/haul/releases/tag/v0.3.0');
   expect(u.message()).toBe('Version 0.3.0 is available.');
 });
 
