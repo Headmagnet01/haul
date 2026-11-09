@@ -1,6 +1,6 @@
 # Haul: handoff
 
-Last updated: 9 Nov 2026. Plans 1–5, 6a, 6b and **7 (Firefox add-on, own pause beats the schedule)** are merged into `master` (7 fast-forwarded from `feat/firefox` after the final review's fix pass). See "Plan 7" below. **Plan 8 (clean-up pass)** is done on `feat/cleanup` and not merged yet: see "Plan 8".
+Last updated: 9 Nov 2026. Plans 1–5, 6a, 6b, 7 and **8 (the clean-up pass)** are merged into `master` (8 fast-forwarded from `feat/cleanup` after the review fix pass and the hand checks). See "Plan 8" below.
 
 **Plan 6a: all 9 tasks done and the review's fix pass done** merged into `master` (branch `feat/app-shell` deleted). Spec `docs/superpowers/specs/2026-11-08-haul-plan-6a-app-shell-design.md`, plan `docs/superpowers/plans/2026-11-08-haul-plan-6a-app-shell.md`; the executor ledger (every ruling) is kept at `docs/superpowers/plans/2026-11-08-haul-plan-6a-app-shell.ledger.md`. Built: `finished_at` + a 5 s speed window, the Settings record and page, tray / close to tray / single instance / autostart, the Finished view, When done with a countdown, toasts with Open folder, and a first-run welcome. **Next: Plan 6b** (packaging and the rest of Plan 6).
 
@@ -14,7 +14,7 @@ A free, open-source Windows download manager. It pairs IDM's fast engine and bro
 ## Where things stand
 | | |
 |---|---|
-| Branch | `master` holds everything through Plan 7 (branch `feat/firefox` merged and deleted). No Git remote exists. |
+| Branch | `master` holds everything through Plan 8 (branch `feat/cleanup` merged and deleted). No Git remote exists. |
 | Plan 6b (8–9 Nov) | Merged. Done: dev/release identifiers, quoted autostart module, Collector captures keep cookies (I5), daily update check + UI, per-user NSIS installer. Rust 428 tests, front end 111 Vitest + 170 Playwright. Installer built and installed by the owner to `C:\tools\Haul`; checks 1–4, 6 and 7 (uninstall) passed; after the review fix pass the rebuilt installer was installed over it the uninstall-first way and Haul restored its startup entry with the switch still on. **Still open:** autostart after a real sign-in. Final review: 3 Important fixed test-first (upgrade turned autostart off; dev builds shared the Run value; `picker.html` unchecked). 6b deferred minors: a failed daily check clears a found update; a restart can hide it up to 24 h; openRelease failures are silent; a re-capture can race the running probe; a wrong-typed StartupApproved value makes enable fail; `safe_release_url` accepts `..` segments (still github.com). |
 | Done | Plans 1–5 merged. Plan 5: `docs/superpowers/plans/2026-11-08-haul-plan-5-browser-extension.md`, Tasks 1–10, design in `docs/superpowers/specs/2026-11-08-haul-browser-extension-design.md`. |
 | Tests (8 Nov, Plan 6a after the fix pass) | Rust: 380 tests. Front end: 105 Vitest, 160 Playwright e2e runs (light and dark). Clippy, rustfmt and svelte-check are clean. Real-app smoke 6/6, including `close_keeps_downloading` and `second_launch_shows_first`. **Engine timing flakes predate 6a** (measured: `master` failed 3 of 4 engine-only runs, the branch 1 of 6): `crash_simulation`, `speed_limit_respected`, `slow_connection_replaced`, `stalled_connections_replaced`, `restart_resumes_interrupted` fail now and then under load and pass alone. Rerun before believing one. |
@@ -53,7 +53,7 @@ A free, open-source Windows download manager. It pairs IDM's fast engine and bro
   - `src/components/`: the Svelte views.
 
 ## Plan 8: the clean-up pass (9 Nov 2026)
-- **Docs:** spec `docs/superpowers/specs/2026-11-09-haul-plan-8-cleanup-design.md`, plan `docs/superpowers/plans/2026-11-09-haul-plan-8-cleanup.md`. Built on `feat/cleanup` in the worktree `.claude/worktrees/plan8`, from `master` d98ae5e. The executor ledger (every ruling) is `.superpowers/sdd/2026-11-09-haul-plan-8-cleanup/progress.md` in that worktree (git-ignored).
+- **Docs:** spec `docs/superpowers/specs/2026-11-09-haul-plan-8-cleanup-design.md`, plan `docs/superpowers/plans/2026-11-09-haul-plan-8-cleanup.md`. Built on `feat/cleanup` in a worktree from `master` d98ae5e, fast-forwarded into `master` and deleted. Ledger (every ruling): `docs/superpowers/plans/2026-11-09-haul-plan-8-cleanup.ledger.md`.
 - **What it fixed:** most of the deferred minors from Plans 6a, 6b and 7, in six tasks, each test-first.
   - Task 1: the flaky Collector capture test waits for post-processing; the Edge real test expects Finished.
   - Task 2: When done waits for the downloads that ran; a checksum mismatch blocks it; Do it now only acts during the countdown; no work every second with Nothing chosen.
